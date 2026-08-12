@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MSP Engineering ONCALL Dashboard — Live</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--text:#f1f5f9;--text2:#94a3b8;
+--accent:#3b82f6;--accent2:#8b5cf6;--red:#ef4444;--green:#22c55e;--orange:#f97316;--yellow:#eab308}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:20px;min-height:100vh}
+
+.header{text-align:center;padding:28px 20px 18px;margin-bottom:24px;background:linear-gradient(135deg,#1e3a5f 0%,#2d1b69 100%);border-radius:16px;border:1px solid rgba(59,130,246,.3)}
+.header h1{font-size:2rem;font-weight:700;margin-bottom:6px}
+.header p{color:var(--text2);font-size:.95rem}
+.live-dot{display:inline-block;width:10px;height:10px;background:#22c55e;border-radius:50%;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.header-controls{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:12px;flex-wrap:wrap}
+.header-controls span{color:var(--text2);font-size:.82rem}
+.btn{background:var(--accent);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:.82rem;font-weight:600;transition:background .2s}
+.btn:hover{background:#2563eb}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+.countdown{font-variant-numeric:tabular-nums}
+.tab-container{display:flex;justify-content:center;gap:16px;margin-bottom:24px;margin-top:-10px}
+.tab-btn{background:var(--surface);color:var(--text2);border:2px solid var(--surface2);padding:10px 30px;border-radius:12px;cursor:pointer;font-size:1.05rem;font-weight:700;transition:all .2s;box-shadow:0 4px 6px rgba(0,0,0,0.1)}
+.tab-btn:hover{border-color:var(--accent);color:var(--text);transform:translateY(-1px)}
+.tab-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+
+/* ── Time-range filter bar ── */
+.filter-strip{display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:24px;flex-wrap:wrap}
+.filter-strip label{color:var(--text2);font-size:.85rem;font-weight:600;margin-right:6px}
+.range-btn{background:var(--surface);color:var(--text2);border:1px solid var(--surface2);padding:7px 16px;border-radius:8px;cursor:pointer;font-size:.82rem;font-weight:600;transition:all .15s}
+.range-btn:hover{border-color:var(--accent);color:var(--text)}
+.range-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:30px}
+.kpi-card{background:var(--surface);border-radius:12px;padding:20px;border:1px solid var(--surface2);text-align:center;transition:transform .2s}
+.kpi-card:hover{transform:translateY(-2px)}
+.kpi-val{font-size:2.2rem;font-weight:800}
+.kpi-link{display:inline-block;color:var(--accent);text-decoration:none}
+.kpi-link:hover{text-decoration:underline}
+.kpi-label{color:var(--text2);font-size:.85rem;margin-top:4px}
+.kpi-blue{color:var(--accent)}.kpi-red{color:var(--red)}.kpi-green{color:var(--green)}.kpi-orange{color:var(--orange)}.kpi-purple{color:var(--accent2)}.kpi-cyan{color:#06b6d4}
+
+.grid{display:grid;gap:24px;margin-bottom:30px}
+.grid-2{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:1fr 1fr 1fr}
+@media(max-width:1200px){.grid-2,.grid-3{grid-template-columns:1fr}}
+
+.card{background:var(--surface);border-radius:12px;padding:24px;border:1px solid var(--surface2)}
+.card h3{font-size:1.05rem;margin-bottom:16px;color:var(--text);border-bottom:2px solid var(--accent);padding-bottom:8px}
+.chart-container{position:relative;height:320px}
+.chart-container-lg{position:relative;height:400px}
+
+.section-title{font-size:1.3rem;font-weight:700;margin:30px 0 16px;padding-left:12px;border-left:4px solid var(--accent)}
+
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{background:var(--surface2);color:var(--text);padding:10px 8px;text-align:left;position:sticky;top:0;z-index:1;white-space:nowrap;cursor:pointer;user-select:none}
+th:hover{background:#475569}
+th .sa{font-size:.65rem;margin-left:3px;opacity:.4}
+td{padding:8px;border-bottom:1px solid var(--surface2)}
+tr:hover{background:rgba(59,130,246,.08)}
+.jira-link{color:var(--accent);text-decoration:none;font-weight:600}
+.jira-link:hover{text-decoration:underline}
+.priority-badge{padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:600;white-space:nowrap}
+.p-blocker{background:#dc262633;color:#fca5a5}.p-critical{background:#ea580c33;color:#fdba74}
+.p-major{background:#f59e0b33;color:#fde68a}.p-minor{background:#3b82f633;color:#93c5fd}.p-trivial{background:#6b728033;color:#d1d5db}
+.sf-badge{background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px;font-weight:700;font-size:.8rem}
+
+.table-wrapper{max-height:500px;overflow-y:auto;border-radius:8px;border:1px solid var(--surface2)}
+.table-wrapper::-webkit-scrollbar{width:6px}
+.table-wrapper::-webkit-scrollbar-thumb{background:var(--surface2);border-radius:3px}
+.tbl-filter{display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+.tbl-filter input{background:var(--surface2);border:1px solid #475569;color:var(--text);padding:8px 14px;border-radius:8px;font-size:.85rem;min-width:250px}
+.tbl-filter input:focus{outline:none;border-color:var(--accent)}
+.tbl-filter .rc{color:var(--text2);font-size:.8rem}
+
+.loading-overlay{position:fixed;inset:0;background:rgba(15,23,42,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+.spinner{width:48px;height:48px;border:4px solid var(--surface2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-overlay p{margin-top:16px;color:var(--text2);font-size:1rem}
+.loading-overlay .sub{font-size:.85rem;margin-top:6px}
+.footer{text-align:center;color:var(--text2);font-size:.8rem;margin-top:40px;padding:20px}
+
+/* Ticker styles */
+.ticker-wrap {
+  width: 100%;
+  overflow: hidden;
+  background-color: rgba(239, 68, 68, 0.2);
+  border: 1px solid var(--red);
+  color: #fca5a5;
+  padding: 8px 0;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  display: none; /* hidden by default */
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+.ticker-text {
+  display: inline-block;
+  white-space: nowrap;
+  padding-left: 100%;
+  animation: ticker 20s linear infinite;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+@keyframes ticker {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-100%, 0, 0); }
+}
+</style>
+</head>
+<body>
+
+<div id="loadingOverlay" class="loading-overlay">
+  <div class="spinner" id="loadSpinner"></div>
+  <p id="loadMsg">Fetching live data from Jira...</p>
+  <p class="sub" id="loadSub">This may take 30–60 seconds on first load</p>
+  <button class="btn" id="loadRetryBtn" style="display:none;margin-top:16px" onclick="triggerRetry()">Trigger Refresh &amp; Retry</button>
+</div>
+
+<!-- Header -->
+<div class="header">
+  <h1>MSP Engineering ONCALL Dashboard</h1>
+  <p><a href="https://jira.nutanix.com/issues/?filter=174525" target="_blank" style="color:var(--accent)">JIRA Filter #174525</a> &bull; <span id="totalBadge">Loading…</span></p>
+  <div class="header-controls">
+    <span><span class="live-dot"></span>LIVE</span>
+    <span>Last refreshed: <strong id="lastRefreshed">—</strong></span>
+    <span>Next in: <strong id="countdown" class="countdown">—</strong></span>
+    <button class="btn" id="refreshBtn" onclick="manualRefresh()">Refresh Now</button>
+  </div>
+</div>
+
+<!-- Error Ticker -->
+<div id="errorTickerWrap" class="ticker-wrap">
+  <div id="errorTickerText" class="ticker-text"></div>
+</div>
+
+<!-- Tabs -->
+<div class="tab-container">
+  <button class="tab-btn active" id="tabOncall" onclick="switchTab('oncall')">ONCALLs (Filter 174525)</button>
+  <button class="tab-btn" id="tabCfd" onclick="switchTab('cfd')">MSP-CFDs-Overall (Filter 181164)</button>
+  <button class="tab-btn" id="tabCfi" onclick="switchTab('cfi')">MSP-CFIs-Overall (Filter 181165)</button>
+</div>
+
+<!-- Time-range filter -->
+<div class="filter-strip" id="rangeBar">
+  <label>Time Range:</label>
+  <button class="range-btn active" data-months="3">Last 1 Qtr</button>
+  <button class="range-btn" data-months="6">Last 2 Qtrs</button>
+  <button class="range-btn" data-months="9">Last 3 Qtrs</button>
+  <button class="range-btn" data-months="12">Last 1 Year</button>
+  <button class="range-btn" data-months="24">Last 2 Years</button>
+  <button class="range-btn" data-months="0">All Time</button>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-row">
+  <div class="kpi-card"><a class="kpi-val kpi-link kpi-cyan" id="kpiOpenTodayLink" href="https://jira.nutanix.com/issues/?filter=174525" target="_blank" rel="noopener noreferrer" title="Currently open bugs in Jira"><span id="kpiOpenToday">—</span></a><div class="kpi-label">Currently Open</div></div>
+  <div class="kpi-card"><a class="kpi-val kpi-link kpi-orange" id="kpiHighImpactLink" href="https://jira.nutanix.com/issues/?filter=174525" target="_blank" rel="noopener noreferrer" title="Top open P0/P1 CFDs in Jira"><span id="kpiHighImpact">—</span></a><div class="kpi-label">Top Open CFDs (P0, P1)</div></div>
+  <div class="kpi-card"><a class="kpi-val kpi-link kpi-blue" id="kpiTotalLink" href="https://jira.nutanix.com/issues/?filter=174525" target="_blank" rel="noopener noreferrer" title="Open filtered issues in Jira"><span id="kpiTotal">—</span></a><div class="kpi-label">Total ONCalls (filtered)</div></div>
+  <div class="kpi-card"><a class="kpi-val kpi-link kpi-red" id="kpiOpenLink" href="https://jira.nutanix.com/issues/?filter=174525" target="_blank" rel="noopener noreferrer" title="Open ONCalls in Jira"><span id="kpiOpen">—</span></a><div class="kpi-label">Open (in range)</div></div>
+  <div class="kpi-card"><a class="kpi-val kpi-link kpi-green" id="kpiClosedLink" href="https://jira.nutanix.com/issues/?filter=174525" target="_blank" rel="noopener noreferrer" title="Open closed ONCalls in Jira"><span id="kpiClosed">—</span></a><div class="kpi-label">Closed (in range)</div></div>
+</div>
+
+<!-- 1 & 6: Monthly + Open vs Closed -->
+<div class="section-title">1. ONCALL Trends Across Months & Open vs Closed</div>
+<div class="grid grid-3">
+  <div class="card"><h3>Monthly ONCALL Trend</h3><div class="chart-container"><canvas id="monthlyTrend"></canvas></div></div>
+  <div class="card"><h3>Open vs Closed per Month</h3><div class="chart-container"><canvas id="openVsClosed"></canvas></div></div>
+  <div class="card"><h3>SF Cases per Month</h3><div class="chart-container"><canvas id="sfCasesTrend"></canvas></div></div>
+</div>
+
+<!-- 2: Versions -->
+<div class="section-title">2. Trend Across Releases</div>
+<div class="grid grid-3">
+  <div class="card"><h3>Top Fix Version/s</h3><div class="chart-container"><canvas id="versionChart"></canvas></div></div>
+  <div class="card"><h3>Top Affects Version/s</h3><div class="chart-container"><canvas id="affectsChart"></canvas></div></div>
+  <div class="card"><h3 id="fixedReleaseTitle">Tickets Fixed Per Release</h3><div class="chart-container"><canvas id="fixedReleaseChart"></canvas></div></div>
+</div>
+
+<!-- 2c: Priority & Resolution -->
+<div class="section-title">2c. Priority & Resolution Distribution</div>
+<div class="grid grid-3">
+  <div class="card"><h3>Priority Distribution (All)</h3><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
+  <div class="card"><h3 id="priorityOpenTitle">Priority Distribution (Currently Open)</h3><div class="chart-container"><canvas id="priorityOpenChart"></canvas></div></div>
+  <div class="card"><h3 id="resolutionTitle">Resolution breakdown of closed tickets</h3><div class="chart-container"><canvas id="resolutionChart"></canvas></div></div>
+</div>
+
+<!-- 3: Components & Impact -->
+<div class="section-title">3. Trend Across Components & Impact</div>
+<div class="grid grid-2">
+  <div class="card"><h3>Top Components (CFDs)</h3><div class="chart-container-lg"><canvas id="componentChart"></canvas></div></div>
+  <div class="card"><h3>Top Impacts</h3><div class="chart-container-lg"><canvas id="impactChart"></canvas></div></div>
+</div>
+
+<!-- 4: Reporters & Labels -->
+<div class="section-title">4. Trend Across Reporters & Labels</div>
+<div class="grid grid-2">
+  <div class="card"><h3>Top Reporters (Customer Representatives)</h3><div class="chart-container-lg"><canvas id="reporterChart"></canvas></div></div>
+  <div class="card"><h3>Top Labels</h3><div class="chart-container-lg"><canvas id="labelChart"></canvas></div></div>
+</div>
+
+<!-- 5: Monthly Labels -->
+<div class="section-title">5. Monthly Labels Trend</div>
+<div class="card" style="margin-bottom: 30px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid var(--accent); margin-bottom:16px; padding-bottom:8px;">
+    <h3 style="border:none; margin:0; padding:0;">Labels per Month</h3>
+    <div style="font-size:0.8rem; color:var(--text2);">Click labels below to show/hide</div>
+  </div>
+  <div id="labelToggles" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;"></div>
+  <div class="chart-container-lg"><canvas id="monthlyLabelsChart"></canvas></div>
+</div>
+
+<!-- 6: CFDs with SF Cases -->
+<div class="section-title">6. Tickets with High Salesforce Cases Attached</div>
+<div class="card">
+  <div class="tbl-filter"><input type="text" id="sfF" placeholder="Search…" oninput="filterTbl('sfTbl','sfF')"><span class="rc" id="sfC"></span></div>
+  <div class="table-wrapper"><table id="sfTbl"><thead id="sfH"></thead><tbody id="sfB"></tbody></table></div>
+</div>
+
+<!-- 7: High Impact -->
+<div class="section-title">7. High Impact ONCalls (P0 / P1 / P2)</div>
+<div class="card">
+  <div class="tbl-filter"><input type="text" id="hiF" placeholder="Search…" oninput="filterTbl('hiTbl','hiF')"><span class="rc" id="hiC"></span></div>
+  <div class="table-wrapper" style="max-height:600px"><table id="hiTbl"><thead id="hiH"></thead><tbody id="hiB"></tbody></table></div>
+</div>
+
+<!-- 8: Currently Open -->
+<div class="section-title" id="openTitle">8. Currently Open ONCalls</div>
+<div class="card">
+  <div class="tbl-filter"><input type="text" id="opF" placeholder="Search…" oninput="filterTbl('opTbl','opF')"><span class="rc" id="opC"></span></div>
+  <div class="table-wrapper" style="max-height:600px"><table id="opTbl"><thead id="opH"></thead><tbody id="opB"></tbody></table></div>
+</div>
+
+<!-- 9: All in range -->
+<div class="section-title" id="allTitle">9. All ONCalls in Selected Range</div>
+<div class="card">
+  <div class="tbl-filter"><input type="text" id="alF" placeholder="Search…" oninput="filterTbl('alTbl','alF')"><span class="rc" id="alC"></span></div>
+  <div class="table-wrapper" style="max-height:600px"><table id="alTbl"><thead id="alH"></thead><tbody id="alB"></tbody></table></div>
+</div>
+
+<!-- 10: Fixed but missing real Fix Version -->
+<div class="section-title" id="placeholderTitle">10. Fixed Tickets with Placeholder Fix Version (master / msp-master / Triage)</div>
+<div class="card">
+  <div style="font-size:0.85rem; color:var(--text2); margin-bottom:10px;">
+    Closed tickets with <code style="background:var(--surface2); padding:2px 6px; border-radius:4px;">resolution = Fixed</code>
+    where every fix version is a placeholder (<code style="background:var(--surface2); padding:2px 6px; border-radius:4px;">master</code>,
+    <code style="background:var(--surface2); padding:2px 6px; border-radius:4px;">msp-master</code>, or
+    <code style="background:var(--surface2); padding:2px 6px; border-radius:4px;">Triage</code>) — needs hygiene backfill of the real release.
+  </div>
+  <div class="tbl-filter"><input type="text" id="phF" placeholder="Search…" oninput="filterTbl('phTbl','phF')"><span class="rc" id="phC"></span></div>
+  <div class="table-wrapper" style="max-height:600px"><table id="phTbl"><thead id="phH"></thead><tbody id="phB"></tbody></table></div>
+</div>
+
+<div class="footer">MSP Engineering ONCALL Dashboard &bull; Live from <a href="https://jira.nutanix.com/issues/?filter=174525" style="color:var(--accent)">Filter #174525</a> &bull; Auto-refreshes every <span id="intTxt">30</span> min</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ══════════════════════════════════════════════════════════════════════════
+const COLORS=['#3b82f6','#8b5cf6','#ec4899','#f97316','#22c55e','#eab308','#06b6d4','#ef4444','#a855f7','#14b8a6','#f43f5e','#84cc16','#6366f1','#fb923c','#2dd4bf'];
+const PC={'Blocker - P0':'#dc2626','Critical - P1':'#ea580c','Major - P2':'#f59e0b','Minor - P3':'#3b82f6','Trivial - P4':'#6b7280'};
+const PCLS={'Blocker - P0':'p-blocker','Critical - P1':'p-critical','Major - P2':'p-major','Minor - P3':'p-minor','Trivial - P4':'p-trivial'};
+Chart.defaults.color='#94a3b8';Chart.defaults.borderColor='#334155';
+
+let RAW=[];
+let RAW_ONCALL=[];
+let RAW_CFD=[];
+let RAW_CFI=[];
+let currentTab='oncall';
+const FILTER_ID={oncall:'174525',cfd:'181164',cfi:'181165'};
+const FIX_VERSION_EXCLUDE=new Set(['msp-master','master','Triage']);
+const FIX_VERSION_PLACEHOLDERS=new Set(['msp-master','master','Triage']);
+// Also drop placeholder versions like "MSP-x.x.x.1" or "pc.x.x.x.6" — these are
+// not real releases, just engineering placeholders that Jira hygiene leaves behind.
+const FIX_VERSION_PLACEHOLDER_RE=/x\.x\.x/i;
+function isPlaceholderVersion(v){
+  return FIX_VERSION_EXCLUDE.has(v) || FIX_VERSION_PLACEHOLDER_RE.test(v);
+}
+const TAB_NAME={oncall:'ONCALL',cfd:'CFD',cfi:'CFI'};
+
+function switchTab(tab){
+  currentTab=tab;
+  document.getElementById('tabOncall').classList.toggle('active',tab==='oncall');
+  document.getElementById('tabCfd').classList.toggle('active',tab==='cfd');
+  document.getElementById('tabCfi').classList.toggle('active',tab==='cfi');
+  if(tab==='cfd'){
+    document.documentElement.style.setProperty('--accent','#8b5cf6');
+  } else if(tab==='cfi'){
+    document.documentElement.style.setProperty('--accent','#ec4899');
+  } else {
+    document.documentElement.style.setProperty('--accent','#3b82f6');
+  }
+  renderFromFilter();
+}
+let selectedMonths=3; // default: last 1 qtr
+let charts={};
+let refreshTimer=null, countdownSec=0;
+let selectedLabels=new Set();
+
+// ══════════════════════════════════════════════════════════════════════════
+//  DATA FETCHING
+// ══════════════════════════════════════════════════════════════════════════
+async function fetchData(){const r=await fetch('/api/data');if(r.status===202)return r.json();return r.json();}
+
+let loadAttempts=0;
+async function loadDashboard(){
+  const d=await fetchData();
+  if(!d||d.status==='loading'||d.status==='error'){
+    loadAttempts++;
+    const msgEl=document.getElementById('loadMsg');
+    const subEl=document.getElementById('loadSub');
+    const retryBtn=document.getElementById('loadRetryBtn');
+    const spinner=document.getElementById('loadSpinner');
+
+    if(d&&d.status==='error'){
+      msgEl.textContent='Jira MCP Server Unreachable';
+      subEl.innerHTML=d.message+'<br><span style="font-size:.75rem;color:#64748b;margin-top:4px;display:inline-block">Error: '+d.error+'</span>';
+      retryBtn.style.display='inline-block';
+      spinner.style.borderTopColor='#ef4444';
+    } else if(loadAttempts>10){
+      msgEl.textContent='Still waiting for data...';
+      subEl.textContent='Server is loading data from Jira ('+loadAttempts*3+'s elapsed)';
+      retryBtn.style.display='inline-block';
+    } else {
+      subEl.textContent='Waiting for data... ('+loadAttempts*3+'s)';
+    }
+    setTimeout(loadDashboard,3000);return;
+  }
+  document.getElementById('loadingOverlay').style.display='none';
+  RAW_ONCALL=d.oncall||[];
+  RAW_CFD=d.cfd||[];
+  RAW_CFI=d.cfi||[];
+  
+  const tickerWrap = document.getElementById('errorTickerWrap');
+  const tickerText = document.getElementById('errorTickerText');
+  if(d.error) {
+    tickerWrap.style.display='block';
+    const mcp = d.mcp_server || 'Jira MCP Server';
+    tickerText.textContent = `⚠️ WARNING: Showing stale data. Connection to ${mcp} failed (${d.error_count}x). Last attempt error: ${d.error}`;
+  } else {
+    tickerWrap.style.display='none';
+  }
+
+  document.getElementById('lastRefreshed').textContent=d.last_refreshed;
+  document.getElementById('intTxt').textContent=d.refresh_interval_min;
+  startCountdown(d.refresh_interval_min*60);
+  renderFromFilter();
+}
+
+async function triggerRetry(){
+  const btn=document.getElementById('loadRetryBtn');btn.disabled=true;btn.textContent='Triggering...';
+  document.getElementById('loadMsg').textContent='Triggering server refresh...';
+  document.getElementById('loadSub').textContent='Asking server to re-fetch from Jira. This may take a few minutes.';
+  document.getElementById('loadSpinner').style.borderTopColor='var(--accent)';
+  await fetch('/api/refresh',{method:'POST'});
+  loadAttempts=0;
+  btn.textContent='Triggered — waiting...';
+  setTimeout(()=>{btn.disabled=false;btn.textContent='Trigger Refresh & Retry';},30000);
+}
+
+async function manualRefresh(){
+  const btn=document.getElementById('refreshBtn');btn.disabled=true;btn.textContent='Refreshing…';
+  await fetch('/api/refresh',{method:'POST'});
+  const oldTs=document.getElementById('lastRefreshed').textContent;
+  const poll=async()=>{
+    const d=await fetchData();
+    if(d && d.error && oldTs !== '—') {
+      // If refresh failed and we have stale data, stop polling and show ticker
+      RAW_ONCALL=d.oncall||[];
+      RAW_CFD=d.cfd||[];RAW_CFI=d.cfi||[];
+      const tickerWrap = document.getElementById('errorTickerWrap');
+      const tickerText = document.getElementById('errorTickerText');
+      tickerWrap.style.display='block';
+      const mcp = d.mcp_server || 'Jira MCP Server';
+      tickerText.textContent = `⚠️ WARNING: Showing stale data. Connection to ${mcp} failed (${d.error_count}x). Last attempt error: ${d.error}`;
+      document.getElementById('lastRefreshed').textContent=d.last_refreshed;
+      renderFromFilter();
+      btn.disabled=false;btn.textContent='Refresh Now';
+      startCountdown(d.refresh_interval_min*60);
+    }
+    else if(d&&d.last_refreshed!==oldTs){
+      RAW_ONCALL=d.oncall||[];
+      RAW_CFD=d.cfd||[];RAW_CFI=d.cfi||[];
+      const tickerWrap = document.getElementById('errorTickerWrap');
+      tickerWrap.style.display='none';
+      document.getElementById('lastRefreshed').textContent=d.last_refreshed;
+      renderFromFilter();
+      btn.disabled=false;btn.textContent='Refresh Now';
+      startCountdown(d.refresh_interval_min*60);
+    }else{
+      setTimeout(poll,3000);
+    }
+  };
+  setTimeout(poll,5000);
+}
+
+function startCountdown(s){
+  countdownSec=s;if(refreshTimer)clearInterval(refreshTimer);
+  refreshTimer=setInterval(()=>{countdownSec--;if(countdownSec<=0){clearInterval(refreshTimer);loadDashboard();return;}
+    const m=Math.floor(countdownSec/60),sc=countdownSec%60;
+    document.getElementById('countdown').textContent=`${m}m ${String(sc).padStart(2,'0')}s`;},1000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  RANGE FILTER BAR
+// ══════════════════════════════════════════════════════════════════════════
+document.getElementById('rangeBar').addEventListener('click',e=>{
+  const btn=e.target.closest('.range-btn');if(!btn)return;
+  document.querySelectorAll('.range-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  selectedMonths=parseInt(btn.dataset.months,10);
+  renderFromFilter();
+});
+
+function cutoffDate(){
+  if(selectedMonths===0)return new Date('1970-01-01');
+  const d=new Date();d.setMonth(d.getMonth()-selectedMonths);d.setDate(1);return d;
+}
+
+function filtered(){const c=cutoffDate();const ds=currentTab==="oncall"?RAW_ONCALL:(currentTab==="cfd"?RAW_CFD:RAW_CFI);return ds.filter(i=>new Date(i.created)>=c);}
+
+function formatJqlDate(d){
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function toJiraSearchUrl(jql){
+  return `https://jira.nutanix.com/issues/?jql=${encodeURIComponent(jql)}`;
+}
+
+function baseRangeJql(){
+  const fid=FILTER_ID[currentTab];
+  if(selectedMonths===0) return `filter = ${fid}`;
+  return `filter = ${fid} AND created >= "${formatJqlDate(cutoffDate())}"`;
+}
+
+function buildKpiUrl(issues,fallbackClause=''){
+  const base=baseRangeJql();
+
+  // For smaller filtered sets, use exact keys so Jira count matches KPI exactly.
+  if(issues.length>0&&issues.length<=200){
+    const keys=issues.map(i=>`"${i.key}"`).join(',');
+    return toJiraSearchUrl(`${base} AND key in (${keys}) ORDER BY created DESC`);
+  }
+
+  const extra=fallbackClause?` AND ${fallbackClause}`:'';
+  return toJiraSearchUrl(`${base}${extra} ORDER BY created DESC`);
+}
+
+function buildKpiTotalUrl(issues){
+  const fid=FILTER_ID[currentTab];
+  if(selectedMonths===0) return `https://jira.nutanix.com/issues/?filter=${fid}`;
+  return buildKpiUrl(issues);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  AGGREGATION  (runs client-side on every filter change)
+// ══════════════════════════════════════════════════════════════════════════
+function aggregate(issues){
+  const mTot={},mOpen={},mClosed={},mSf={},mLbl={};
+  const compC={},verC={},fixedVerC={},affC={},priC={},priOpenC={},lblC={},repC={},impC={},resC={};
+  let openList=[],closedList=[],hiList=[],sfList=[],phList=[],topOpenList=[];
+  const now=new Date();
+
+  issues.forEach(r=>{
+    const mk=r.created.slice(0,7);  // YYYY-MM
+    mTot[mk]=(mTot[mk]||0)+1;
+    if(r.is_open){mOpen[mk]=(mOpen[mk]||0)+1;}else{mClosed[mk]=(mClosed[mk]||0)+1;}
+    mSf[mk]=(mSf[mk]||0)+(parseInt(r.sf_cases)||0);
+
+    if(!mLbl[mk]) mLbl[mk]={};
+
+    r.components.forEach(c=>{
+      compC[c]=(compC[c]||0)+1;
+    });
+    r.fix_versions.forEach(v=>{
+      if(isPlaceholderVersion(v)) return;
+      verC[v]=(verC[v]||0)+1;
+      if(!r.is_open){ fixedVerC[v]=(fixedVerC[v]||0)+1; }
+    });
+    (r.affects_versions||[]).forEach(v=>{affC[v]=(affC[v]||0)+1;});
+    
+    priC[r.priority]=(priC[r.priority]||0)+1;
+    if(r.is_open){ priOpenC[r.priority]=(priOpenC[r.priority]||0)+1; }
+    if(!r.is_open){ const rn=r.resolution||'Unresolved'; resC[rn]=(resC[rn]||0)+1; }
+    
+    (r.impacts||[]).forEach(imp=>{
+      impC[imp]=(impC[imp]||0)+1;
+    });
+    
+    r.labels.forEach(l=>{
+      lblC[l]=(lblC[l]||0)+1;
+      mLbl[mk][l]=(mLbl[mk][l]||0)+1;
+    });
+    repC[r.reporter]=(repC[r.reporter]||0)+1;
+
+    if(r.is_open) openList.push(r); else closedList.push(r);
+    if(['Blocker - P0','Critical - P1','Major - P2'].includes(r.priority)) hiList.push(r);
+    if(r.is_open && ['Blocker - P0','Critical - P1'].includes(r.priority)) topOpenList.push(r);
+    if(r.sf_cases>0) sfList.push(r);
+    if(!r.is_open && r.resolution==='Fixed' && Array.isArray(r.fix_versions) && r.fix_versions.length>0
+       && r.fix_versions.every(v=>FIX_VERSION_PLACEHOLDERS.has(v))){
+      phList.push(r);
+    }
+  });
+
+  const months=Object.keys(mTot).sort();
+  const mLabels=months.map(m=>{const[y,mo]=m.split('-');return new Date(y,mo-1).toLocaleString('en',{month:'short',year:'numeric'});});
+
+  const topN=(obj,n)=>Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,n);
+
+  sfList.sort((a,b)=>b.sf_cases-a.sf_cases);
+  const pOrd={'Blocker - P0':0,'Critical - P1':1,'Major - P2':2};
+  hiList.sort((a,b)=>(pOrd[a.priority]??9)-(pOrd[b.priority]??9)||a.created.localeCompare(b.created));
+  const hiListTable=hiList.slice(0,200);
+  const sfListTable=sfList.slice(0,100);
+
+  return {
+    total:issues.length,
+    openCount:openList.length,
+    closedCount:issues.length-openList.length,
+    hiCount:hiList.length,
+    topOpenCount:topOpenList.length,
+    sfCount:sfList.length,
+    mLabels, months,
+    mTot:months.map(m=>mTot[m]||0),
+    mOpen:months.map(m=>mOpen[m]||0),
+    mClosed:months.map(m=>mClosed[m]||0),
+    mSf:months.map(m=>mSf[m]||0),
+    mLbl,
+    comp:topN(compC,20), ver:topN(verC,15), fixedVer:topN(fixedVerC,25), aff:topN(affC,20), rep:topN(repC,20),
+    pri:Object.entries(priC), priOpen:Object.entries(priOpenC), imp:topN(impC,20), lbl:topN(lblC,20), res:Object.entries(resC),
+    openList, closedList, hiList, sfList, hiListTable, sfListTable, topOpenList,
+    phList: phList.sort((a,b)=>b.created.localeCompare(a.created)),
+    allList:issues,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  MASTER RENDER
+// ══════════════════════════════════════════════════════════════════════════
+function renderFromFilter(){
+  const issues=filtered();
+  const a=aggregate(issues);
+  const openClause='statusCategory != Done AND status not in (Closed, Resolved, Done, Complete, Cancelled)';
+  const closedClause='(statusCategory = Done OR status in (Closed, Resolved, Done, Complete, Cancelled))';
+  const hiClause='priority in ("Blocker - P0", "Critical - P1", "Major - P2")';
+  const topOpenClause='priority in ("Blocker - P0", "Critical - P1") AND statusCategory != Done AND status not in (Closed, Resolved, Done, Complete, Cancelled)';
+  const sfClause='cf[12364] > 0';
+
+  const ds=currentTab==='oncall'?RAW_ONCALL:(currentTab==='cfd'?RAW_CFD:RAW_CFI);
+  const tName=TAB_NAME[currentTab];
+  const fid=FILTER_ID[currentTab];
+
+  // KPIs
+  document.getElementById('kpiTotal').textContent=a.total;
+  document.getElementById('kpiTotalLink').href=buildKpiTotalUrl(issues);
+  document.getElementById('kpiTotalLink').title=`Open ${a.total} filtered issues in Jira`;
+  document.getElementById('kpiOpen').textContent=a.openCount;
+  document.getElementById('kpiClosed').textContent=a.closedCount;
+  document.getElementById('kpiHighImpact').textContent=a.topOpenCount;
+  const fullDs=currentTab==='oncall'?RAW_ONCALL:(currentTab==='cfd'?RAW_CFD:RAW_CFI);
+  const openTodayList=fullDs.filter(r=>r.is_open);
+  document.getElementById('kpiOpenToday').textContent=openTodayList.length;
+  document.getElementById('kpiOpenLink').href=buildKpiUrl(a.openList,openClause);
+  document.getElementById('kpiOpenLink').title=`Open ${a.openCount} open ${tName}s in Jira`;
+  document.getElementById('kpiClosedLink').href=buildKpiUrl(a.closedList,closedClause);
+  document.getElementById('kpiClosedLink').title=`Open ${a.closedCount} closed ${tName}s in Jira`;
+  document.getElementById('kpiHighImpactLink').href=buildKpiUrl(a.topOpenList,topOpenClause);
+  document.getElementById('kpiHighImpactLink').title=`Open ${a.topOpenCount} top open P0/P1 ${tName}s in Jira`;
+  document.getElementById('kpiOpenTodayLink').href=buildKpiUrl(openTodayList,openClause);
+  document.getElementById('kpiOpenTodayLink').title=`Open ${openTodayList.length} currently open ${tName}s in Jira`;
+
+  document.getElementById('totalBadge').textContent=`${ds.length} Total Issues`;
+  const hpa = document.querySelector('.header p a'); if(hpa) hpa.href=`https://jira.nutanix.com/issues/?filter=${fid}`;
+  const hpa2 = document.querySelector('.header p a'); if(hpa2) hpa2.textContent=`JIRA Filter #${fid}`;
+  const fa = document.querySelector('.footer a'); if(fa) fa.href=`https://jira.nutanix.com/issues/?filter=${fid}`;
+  const fa2 = document.querySelector('.footer a'); if(fa2) fa2.textContent=`Filter #${fid}`;
+
+  const kpiT = document.getElementById('kpiTotal'); if(kpiT && kpiT.nextElementSibling) kpiT.nextElementSibling.textContent=`Total ${tName}s (filtered)`;
+  const st0 = document.querySelectorAll('.section-title'); if(st0.length > 0) st0[0].textContent=`1. ${tName} Trends Across Months & Open vs Closed`;
+  const mt = document.getElementById('monthlyTrend'); if(mt && mt.parentElement && mt.parentElement.querySelector('h3')) mt.parentElement.querySelector('h3').textContent=`Monthly ${tName} Trend`;
+  const st = document.querySelectorAll('.section-title'); if(st.length > 6) st[6].textContent=`7. High Impact ${tName}s (P0 / P1 / P2)`;
+  if(document.getElementById('openTitle')) document.getElementById('openTitle').textContent=`8. Currently Open ${tName}s (${a.openCount})`;
+  if(document.getElementById('allTitle')) document.getElementById('allTitle').textContent=`9. All ${tName}s in Selected Range (${a.total})`;
+
+  
+  
+
+  // Charts
+  const mainColor = currentTab==='oncall'?'#3b82f6':(currentTab==='cfd'?'#8b5cf6':'#ec4899');
+  lineChart('monthlyTrend',a.mLabels,a.mTot,`${tName}s Created`,mainColor);
+  dualLineChart('openVsClosed',a.mLabels,a.mOpen,a.mClosed);
+  lineChart('sfCasesTrend',a.mLabels,a.mSf,'Salesforce Cases','#a855f7');
+  hBar('versionChart',a.ver,COLORS);
+  hBar('fixedReleaseChart',a.fixedVer,COLORS);
+  const fxt=document.getElementById('fixedReleaseTitle');
+  if(fxt){ fxt.textContent=`Tickets Fixed Per Release (${a.closedCount} closed)`; }
+  doughnut('resolutionChart',a.res);
+  const rzt=document.getElementById('resolutionTitle');
+  if(rzt){ rzt.textContent=`Resolution breakdown of ${a.closedCount} closed ${tName}s`; }
+  hBar('affectsChart',a.aff,COLORS);
+  hBar('componentChart',a.comp,['#ec4899cc']);
+  hBar('impactChart',a.imp,['#14b8a6cc']);
+  doughnut('priorityChart',a.pri);
+  doughnut('priorityOpenChart',a.priOpen);
+  const pot=document.getElementById('priorityOpenTitle');
+  if(pot){ pot.textContent=`Priority Distribution (${a.openCount} Currently Open)`; }
+  hBar('reporterChart',a.rep,['#8b5cf6cc']);
+  hBar('labelChart',a.lbl,['#06b6d4cc']);
+
+  // Handle label toggles for Monthly Labels Chart
+  const top20Labels = a.lbl.slice(0, 20).map(p => p[0]);
+  if (selectedLabels.size === 0) {
+    top20Labels.slice(0, 5).forEach(l => selectedLabels.add(l)); // Default to top 5
+  }
+  
+  const togglesContainer = document.getElementById('labelToggles');
+  togglesContainer.innerHTML = '';
+  top20Labels.forEach((lbl, i) => {
+    const btn = document.createElement('button');
+    const isActive = selectedLabels.has(lbl);
+    btn.textContent = lbl;
+    btn.style.cssText = `
+      background: ${isActive ? COLORS[i % COLORS.length] : 'var(--surface2)'};
+      color: ${isActive ? '#fff' : 'var(--text2)'};
+      border: 1px solid ${isActive ? COLORS[i % COLORS.length] : '#475569'};
+      padding: 4px 12px; border-radius: 16px; font-size: 0.75rem; cursor: pointer;
+      transition: all 0.2s;
+    `;
+    btn.onclick = () => {
+      if (selectedLabels.has(lbl)) selectedLabels.delete(lbl);
+      else selectedLabels.add(lbl);
+      renderFromFilter(); // Re-render to update chart and buttons
+    };
+    togglesContainer.appendChild(btn);
+  });
+
+  const labelDatasets = top20Labels.filter(lbl => selectedLabels.has(lbl)).map((lbl, i) => ({
+    type: 'bar',
+    label: lbl,
+    data: a.months.map(m => (a.mLbl[m] && a.mLbl[m][lbl]) || 0),
+    backgroundColor: COLORS[top20Labels.indexOf(lbl) % COLORS.length]
+  }));
+  
+  labelDatasets.unshift({
+    type: 'line',
+    label: `Total ${tName}s`,
+    data: a.mTot,
+    borderColor: '#3b82f6',
+    backgroundColor: '#3b82f626',
+    fill: true,
+    tension: 0.35,
+    pointRadius: 3,
+    pointBackgroundColor: '#3b82f6',
+    borderWidth: 2
+  });
+
+  mixedBarLineChart('monthlyLabelsChart', a.mLabels, labelDatasets);
+
+  // Tables
+  const c8=['key','summary','status','priority','created','assignee','components','sf_cases'];
+  const h8=['Key','Summary','Status','Priority','Created','Assignee','Components','SF Cases'];
+  const c7=['key','summary','status','priority','created','components','sf_cases'];
+  const h7=['Key','Summary','Status','Priority','Created','Components','SF Cases'];
+
+  mkTable('sfH','sfB',h7,c7,a.sfListTable);  document.getElementById('sfC').textContent=`${a.sfListTable.length} rows`;
+  mkTable('hiH','hiB',h8,c8,a.hiListTable);  document.getElementById('hiC').textContent=`${a.hiListTable.length} rows`;
+  mkTable('opH','opB',h8,c8,a.openList);document.getElementById('opC').textContent=`${a.openList.length} rows`;
+  mkTable('alH','alB',h8,c8,a.allList); document.getElementById('alC').textContent=`${a.allList.length} rows`;
+
+  const cPh=['key','summary','status','resolution','fix_versions','created','assignee'];
+  const hPh=['Key','Summary','Status','Resolution','Fix Versions','Created','Assignee'];
+  mkTable('phH','phB',hPh,cPh,a.phList);
+  document.getElementById('phC').textContent=`${a.phList.length} rows`;
+  const pht=document.getElementById('placeholderTitle');
+  if(pht){ pht.textContent=`10. Fixed ${tName}s with Placeholder Fix Version Only (${a.phList.length})`; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  CHART BUILDERS
+// ══════════════════════════════════════════════════════════════════════════
+function destroyChart(id){if(charts[id]){charts[id].destroy();delete charts[id];}}
+
+function lineChart(id,labels,data,label,color){
+  destroyChart(id);
+  charts[id]=new Chart(document.getElementById(id),{type:'line',
+    data:{labels,datasets:[{label,data,borderColor:color,backgroundColor:color+'26',fill:true,tension:.35,pointRadius:3,pointBackgroundColor:color,borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false},ticks:{maxRotation:45}},y:{beginAtZero:true,grid:{color:'#1e293b'}}}}});
+}
+
+function dualLineChart(id,labels,openD,closedD){
+  destroyChart(id);
+  charts[id]=new Chart(document.getElementById(id),{type:'line',
+    data:{labels,datasets:[
+      {label:'Open',data:openD,borderColor:'#ef4444',backgroundColor:'#ef444422',fill:false,tension:.35,pointRadius:3,pointBackgroundColor:'#ef4444',borderWidth:2},
+      {label:'Closed',data:closedD,borderColor:'#22c55e',backgroundColor:'#22c55e22',fill:false,tension:.35,pointRadius:3,pointBackgroundColor:'#22c55e',borderWidth:2}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},
+      scales:{x:{grid:{display:false},ticks:{maxRotation:45}},y:{beginAtZero:true,grid:{color:'#1e293b'}}}}});
+}
+
+function hBar(id,pairs,colors){
+  destroyChart(id);
+  const labels=pairs.map(p=>p[0]),data=pairs.map(p=>p[1]);
+  const bg=colors.length===1?colors[0]:labels.map((_,i)=>colors[i%colors.length]);
+  charts[id]=new Chart(document.getElementById(id),{type:'bar',
+    data:{labels,datasets:[{data,backgroundColor:bg,borderRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},
+      scales:{x:{beginAtZero:true,grid:{color:'#1e293b'}},y:{grid:{display:false}}}}});
+}
+
+function doughnut(id,pairs){
+  destroyChart(id);
+  const labels=pairs.map(p=>p[0]),data=pairs.map(p=>p[1]);
+  const bg=labels.map((l,i)=>PC[l]||COLORS[i%COLORS.length]);
+  charts[id]=new Chart(document.getElementById(id),{type:'doughnut',
+    data:{labels,datasets:[{data,backgroundColor:bg,borderWidth:0}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,usePointStyle:true}}}}});
+}
+
+function mixedBarLineChart(id,labels,datasets){
+  destroyChart(id);
+  charts[id]=new Chart(document.getElementById(id),{type:'bar',
+    data:{labels,datasets},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:10}}},
+      scales:{x:{grid:{display:true,color:'#1e293b'}},y:{beginAtZero:true,grid:{color:'#1e293b'}}}}});
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  TABLE BUILDERS
+// ══════════════════════════════════════════════════════════════════════════
+function mkTable(hId,bId,headers,cols,rows){
+  document.getElementById(hId).innerHTML='<tr>'+headers.map((h,i)=>`<th onclick="sortTbl('${bId}',${i})">${h}<span class="sa">&#x25B4;&#x25BE;</span></th>`).join('')+'</tr>';
+  document.getElementById(bId).innerHTML=rows.map(r=>'<tr>'+cols.map(c=>cell(c,r)).join('')+'</tr>').join('');
+}
+
+function esc(s){
+  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function cell(col,row){
+  const v=row[col];
+  if(col==='key') return `<td><a href="https://jira.nutanix.com/browse/${esc(v)}" target="_blank" class="jira-link">${esc(v)}</a></td>`;
+  if(col==='priority'){const cls=PCLS[v]||'';return `<td><span class="priority-badge ${cls}">${esc(v)}</span></td>`;}
+  if(col==='sf_cases'){const n=parseInt(v)||0;return n?`<td><span class="sf-badge">${n}</span></td>`:'<td>0</td>';}
+  if(col==='summary'){const s=String(v||'');const t=s.length>120?s.slice(0,120)+'…':s;return `<td title="${esc(s)}">${esc(t)}</td>`;}
+  if(col==='components'){const a=Array.isArray(v)?v.join(', '):v;return `<td>${esc(a||'')}</td>`;}
+  if(col==='fix_versions'){const a=Array.isArray(v)?v.join(', '):v;return `<td>${esc(a||'')}</td>`;}
+  if(col==='resolution'){return `<td>${esc(v||'Unresolved')}</td>`;}
+  if(col==='assignee'||col==='reporter'){
+    const key=row[col+'_key'];
+    const label=esc(v??'');
+    if(key && !String(key).startsWith('<')){
+      return `<td><a href="https://jira.nutanix.com/secure/ViewProfile.jspa?name=${encodeURIComponent(key)}" target="_blank" class="jira-link">${label}</a></td>`;
+    }
+    return `<td>${label}</td>`;
+  }
+  return `<td>${esc(v??'')}</td>`;
+}
+
+function filterTbl(tblId,fId){
+  const f=document.getElementById(fId).value.toLowerCase();
+  const rows=document.getElementById(tblId).querySelectorAll('tbody tr');
+  let vis=0;rows.forEach(r=>{const m=r.textContent.toLowerCase().includes(f);r.style.display=m?'':'none';if(m)vis++;});
+  const cId=tblId.replace('Tbl','C');
+  const el=document.getElementById(cId);if(el)el.textContent=f?`${vis} / ${rows.length} rows`:`${rows.length} rows`;
+}
+
+function sortTbl(bId,ci){
+  const tb=document.getElementById(bId);const rows=Array.from(tb.querySelectorAll('tr'));
+  const dir=tb.dataset.sd==='a'?'d':'a';tb.dataset.sd=dir;
+  rows.sort((a,b)=>{let va=a.children[ci]?.textContent||'',vb=b.children[ci]?.textContent||'';
+    const na=parseFloat(va),nb=parseFloat(vb);
+    if(!isNaN(na)&&!isNaN(nb))return dir==='a'?na-nb:nb-na;
+    return dir==='a'?va.localeCompare(vb):vb.localeCompare(va);});
+  rows.forEach(r=>tb.appendChild(r));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════════════
+loadDashboard();
+</script>
+</body>
+</html>

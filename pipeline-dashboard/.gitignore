@@ -1,0 +1,4 @@
+node_modules/
+dist/
+data/alert-state.json
+*.log

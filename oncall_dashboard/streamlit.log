@@ -1,0 +1,47 @@
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://0.0.0.0:8051
+
+2026-06-21 15:59:57.161 Uncaught app execution
+Traceback (most recent call last):
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 128, in exec_func_with_error_handling
+    result = func()
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 669, in code_to_exec
+    exec(code, module.__dict__)  # noqa: S102
+  File "/home/manish.sharma/Nutanix/github/oncall_dashboard/streamlit_app.py", line 278, in <module>
+    render_tab(data.get(tab_key, []), tab_key)
+  File "/home/manish.sharma/Nutanix/github/oncall_dashboard/streamlit_app.py", line 156, in render_tab
+    top_n_chart(df['fix_versions'], "Top Fix Version/s", 15, px.colors.qualitative.Plotly, exclude=FIX_VERSION_EXCLUDE),
+  File "/home/manish.sharma/Nutanix/github/oncall_dashboard/streamlit_app.py", line 84, in top_n_chart
+    fig = px.bar(x=counts.values, y=counts.index, orientation='h', title=title, color_discrete_sequence=color_sequence)
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/plotly/express/_chart_types.py", line 381, in bar
+    return make_figure(
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/plotly/express/_core.py", line 2512, in make_figure
+    args = build_dataframe(args, constructor)
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/plotly/express/_core.py", line 1640, in build_dataframe
+    raise ValueError(
+ValueError: Cannot accept list of column references or list of columns for both `x` and `y`.
+2026-06-21 16:01:01.563 Uncaught app execution
+Traceback (most recent call last):
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 128, in exec_func_with_error_handling
+    result = func()
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 669, in code_to_exec
+    exec(code, module.__dict__)  # noqa: S102
+  File "/home/manish.sharma/Nutanix/github/oncall_dashboard/streamlit_app.py", line 278, in <module>
+    render_tab(data.get(tab_key, []), tab_key)
+  File "/home/manish.sharma/Nutanix/github/oncall_dashboard/streamlit_app.py", line 156, in render_tab
+    top_n_chart(df['fix_versions'], "Top Fix Version/s", 15, px.colors.qualitative.Plotly, exclude=FIX_VERSION_EXCLUDE),
+  File "/home/manish.sharma/Nutanix/github/oncall_dashboard/streamlit_app.py", line 84, in top_n_chart
+    fig = px.bar(x=counts.values, y=counts.index, orientation='h', title=title, color_discrete_sequence=color_sequence)
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/plotly/express/_chart_types.py", line 381, in bar
+    return make_figure(
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/plotly/express/_core.py", line 2512, in make_figure
+    args = build_dataframe(args, constructor)
+  File "/home/manish.sharma/.local/lib/python3.9/site-packages/plotly/express/_core.py", line 1640, in build_dataframe
+    raise ValueError(
+ValueError: Cannot accept list of column references or list of columns for both `x` and `y`.
+./start_streamlit.sh: line 3: 1796778 Killed                  python3.9 -m streamlit run /home/manish.sharma/Nutanix/github/oncall_dashboard/streamlit_app.py --server.port 8051 --server.address 0.0.0.0
