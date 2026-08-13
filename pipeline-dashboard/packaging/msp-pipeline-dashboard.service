@@ -1,0 +1,28 @@
+[Unit]
+Description=MSP Pipeline Dashboard (Jenkins pipeline health board)
+Documentation=https://github.com/nutanix/tools/tree/main/pipeline-dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ExecStart is filled in by install.sh (portable binary or Node source runtime).
+ExecStart=__EXEC_START__
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=__CONFIG_FILE__
+Restart=on-failure
+RestartSec=5
+User=__RUN_USER__
+Group=__RUN_GROUP__
+# Runtime state (alert-state.json) lives here.
+StateDirectory=msp-pipeline-dashboard
+Environment=DATA_DIR=/var/lib/msp-pipeline-dashboard
+# Basic hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/msp-pipeline-dashboard
+
+[Install]
+WantedBy=multi-user.target
