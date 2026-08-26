@@ -61,12 +61,35 @@ The installer auto-picks the runtime (bundled binary if it runs on this host,
 otherwise falls back to Node source), creates the `msp-dash` service user, and
 enables the service to start on boot.
 
-**Step 4 — Configure (optional) and restart:**
+**Step 4 — Configure and restart.** Edit `/etc/msp-pipeline-dashboard.env` to set
+the port/bind address, the public dashboard URL (used in Slack links), and the
+Slack bot token + digest schedule:
 
 ```bash
-sudo vi /etc/msp-pipeline-dashboard.env      # set PORT, HOST, Slack, …
+sudo vi /etc/msp-pipeline-dashboard.env
+```
+
+Minimum recommended settings for Slack posting:
+
+```ini
+# Public URL shown as the "Open dashboard" link in Slack (FQDN or IP).
+# If omitted, it is auto-derived from the host name/IP + PORT.
+DASHBOARD_URL=http://<this-host-fqdn-or-ip>:4317
+
+# Slack bot token (xoxb-…) — required to post the master digest.
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_CHANNEL=#test-msp
+
+# Master digest: post master pipelines failing >= N builds, at these local times.
+MASTER_FAIL_THRESHOLD=5
+MASTER_DIGEST_TIMES=09:00 Asia/Kolkata,09:00 America/Los_Angeles
+```
+
+```bash
 sudo systemctl restart msp-pipeline-dashboard
 ```
+
+> See **Slack app setup** below for the one-time bot scope + channel invite.
 
 **Step 5 — Open a firewall port if reaching it from another machine:**
 
@@ -77,7 +100,12 @@ sudo firewall-cmd --add-port=4317/tcp --permanent && sudo firewall-cmd --reload
 sudo ufw allow 4317/tcp
 ```
 
-**Step 6 — Verify:** open `http://<target-host-ip>:4317/`.
+**Step 6 — Verify:** open `http://<target-host-ip>:4317/`, then confirm Slack:
+
+```bash
+curl -s http://<target-host-ip>:4317/api/digest/preview      # who meets threshold
+curl -s -X POST http://<target-host-ip>:4317/api/digest/test # force a test post
+```
 
 Manage the service:
 
@@ -127,17 +155,73 @@ the dashboard.
 |---|---|---|
 | `PORT` | `4317` | HTTP port |
 | `HOST` | `0.0.0.0` | Bind address (`127.0.0.1` = localhost only) |
+| `DASHBOARD_URL` | auto (host name/IP + port) | Public URL for the "Open dashboard" link in Slack |
 | `POLL_INTERVAL_MS` | `180000` | Status poll cadence |
-| `SLACK_WEBHOOK_URL` | — | Incoming webhook for failure alerts (recommended) |
-| `SLACK_ALERT_BOT_TOKEN` | — | Bot token alternative (`chat.postMessage`) |
-| `SLACK_CHANNEL` | `#test-msp` | Alert channel |
+| `SLACK_BOT_TOKEN` | — | Bot token (`xoxb-…`) used with `chat.postMessage` — required for the master digest |
+| `SLACK_APP_TOKEN` | — | App-level token (`xapp-…`); only for Socket Mode later, cannot post |
+| `SLACK_ALERT_BOT_TOKEN` | — | Legacy alias for `SLACK_BOT_TOKEN` |
+| `SLACK_WEBHOOK_URL` | — | Incoming webhook for the per-pipeline failure alert |
+| `SLACK_CHANNEL` | `#test-msp` | Alert/digest channel |
 | `SLACK_MENTION` | `@msp-help` | Group to tag |
 | `SLACK_COOLDOWN_MS` | `21600000` | Per-pipeline re-alert suppression (6h) |
+| `MASTER_DIGEST_ENABLED` | `true` | Toggle the scheduled master digest |
+| `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures that make a master pipeline report-worthy |
+| `MASTER_DIGEST_CHANNEL` | `SLACK_CHANNEL` | Channel for the digest |
+| `MASTER_DIGEST_TIMES` | `09:00 Asia/Kolkata,09:00 America/Los_Angeles` | Daily post times (`HH:MM TZ`, DST-aware) |
 
 Example with Slack enabled:
 
 ```bash
-SLACK_WEBHOOK_URL="https://hooks.slack.com/services/XXX/YYY/ZZZ" node server/index.js
+SLACK_BOT_TOKEN="xoxb-..." node server/index.js
+```
+
+## Slack master-pipeline digest
+
+The app can post the health of the **master** pipelines (the `msp-master` group —
+Precommit + Local LCC + GLCC — plus standalone **LKG**) to Slack on a schedule.
+
+**Rule:** at each configured time, any master pipeline with **≥ `MASTER_FAIL_THRESHOLD`
+(default 5) consecutive build failures** is posted to `MASTER_DIGEST_CHANNEL`
+(default `#test-msp`), one entry each with lane, last build number, and a Jenkins
+deep link. If nothing is failing, nothing is posted.
+
+**Schedule:** `MASTER_DIGEST_TIMES` — default **09:00 IST** and **09:00 US-Pacific**
+each day (timezone/DST-aware, no cron needed).
+
+### Slack app setup (one-time)
+
+The bot token comes from the env var `SLACK_BOT_TOKEN` (`xoxb-…`) — never hardcode
+it. At your Slack app (**OAuth & Permissions**):
+
+1. Add the **`chat:write`** bot-token scope (add `chat:write.public` to post to
+   channels the bot hasn't joined), then reinstall the app.
+2. Invite the bot to the channel: `/invite @<bot-name>` in `#test-msp`.
+3. Set `SLACK_BOT_TOKEN` in the environment (or `/etc/msp-pipeline-dashboard.env`)
+   and restart.
+
+`SLACK_APP_TOKEN` (`xapp-…`) is **not** required for posting — it is only for
+Socket Mode (inbound slash-commands/buttons), which can be added later.
+
+### Posting workflow
+
+```
+poll loop (every 3 min) ──► in-memory snapshot (per-pipeline consecutiveFailures)
+                                     │
+        daily timer (09:00 IST / 09:00 PT, DST-aware)
+                                     ▼
+        select master pipelines with consecutiveFailures ≥ threshold
+                                     ▼
+        chat.postMessage  (Bearer $SLACK_BOT_TOKEN)  ──►  #test-msp
+```
+
+### Test / preview endpoints
+
+```bash
+# See who currently meets the threshold (no post):
+curl -s http://<host>:4317/api/digest/preview
+
+# Force a digest post right now (uses the real bot token):
+curl -s -X POST http://<host>:4317/api/digest/test
 ```
 
 ## Features
@@ -161,3 +245,5 @@ decisions.
 - `GET /api/pipelines` — full snapshot JSON
 - `POST /api/refresh` — force re-discovery + poll
 - `GET /api/health` — liveness
+- `GET /api/digest/preview` — master pipelines currently ≥ failure threshold (no post)
+- `POST /api/digest/test` — force a master-digest Slack post now

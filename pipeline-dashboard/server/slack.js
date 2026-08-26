@@ -3,7 +3,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { SLACK, SETTINGS } = require('./config');
+const { SLACK, MASTER_DIGEST, SETTINGS, dashboardUrl } = require('./config');
 
 const STATE_FILE = path.join(SETTINGS.dataDir, 'alert-state.json');
 
@@ -113,4 +113,123 @@ async function sendFailureAlert(entry) {
   return { sent: false, skipped: false, reason: `http ${result.status}` };
 }
 
-module.exports = { sendFailureAlert, buildMessage };
+/* ------------------------------------------------------------------ *
+ *  Bot-token posting (chat.postMessage) + master-status digest
+ * ------------------------------------------------------------------ */
+
+/** Verify the configured bot token with auth.test. Returns { ok, user, team, error }. */
+async function verifyAuth() {
+  if (!SLACK.botToken) return { ok: false, error: 'no-bot-token' };
+  const res = await postJson(
+    'https://slack.com/api/auth.test',
+    { Authorization: `Bearer ${SLACK.botToken}` },
+    {}
+  );
+  let parsed = {};
+  try {
+    parsed = JSON.parse(res.body || '{}');
+  } catch {
+    parsed = {};
+  }
+  return { ok: !!parsed.ok, user: parsed.user, team: parsed.team, error: parsed.error };
+}
+
+/**
+ * Post a message to a channel via the bot token (chat.postMessage).
+ * `text` is the fallback/notification text; `blocks` is optional Block Kit.
+ */
+async function postMessage(channel, text, blocks) {
+  if (!SLACK.botToken) {
+    console.warn(`[slack] (no SLACK_BOT_TOKEN) would post -> ${channel}:\n${text}`);
+    return { sent: false, skipped: true, reason: 'no-bot-token' };
+  }
+  const payload = { channel, text, link_names: true };
+  if (blocks) payload.blocks = blocks;
+  const result = await postJson(
+    'https://slack.com/api/chat.postMessage',
+    { Authorization: `Bearer ${SLACK.botToken}` },
+    payload
+  );
+  const ok =
+    result.status >= 200 && result.status < 300 && !/"ok"\s*:\s*false/.test(result.body || '');
+  if (!ok) {
+    console.error(`[slack] postMessage failed status=${result.status} body=${result.body}`);
+    return { sent: false, skipped: false, reason: `http ${result.status}` };
+  }
+  return { sent: true, skipped: false };
+}
+
+const STATUS_EMOJI = {
+  success: ':large_green_circle:',
+  failed: ':red_circle:',
+  aborted: ':black_circle:',
+  unstable: ':large_yellow_circle:',
+  running: ':arrows_counterclockwise:',
+  unreachable: ':warning:',
+  unknown: ':white_circle:',
+};
+
+/** Build the Block Kit payload for the master-failure digest. */
+function buildMasterDigest(failing, meta = {}) {
+  const threshold = meta.threshold || MASTER_DIGEST.failThreshold;
+  const header = `:rotating_light: MSP Master Pipeline Alert — ${failing.length} pipeline(s) failing ≥ ${threshold} builds`;
+
+  const lines = failing.map((c) => {
+    const emoji = STATUS_EMOJI[c.status] || STATUS_EMOJI.unknown;
+    const lane = c.lane ? ` _(${c.lane})_` : '';
+    const buildNo = c.lastBuildNumber != null ? `#${c.lastBuildNumber}` : 'n/a';
+    const link = c.url ? `<${c.url}|Jenkins>` : '';
+    return `${emoji} *${c.title}*${lane} — ${c.consecutiveFailures} consecutive failures, latest ${buildNo} ${link}`.trim();
+  });
+
+  const dashUrl = meta.dashboardUrl || dashboardUrl();
+  const dashLink = dashUrl ? `<${dashUrl}|Open MSP Pipeline Dashboard>` : '';
+
+  const text = `${header}\n${lines.join('\n')}${dashUrl ? `\nDashboard: ${dashUrl}` : ''}`;
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: 'MSP Master Pipeline Alert', emoji: true } },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `${failing.length} master pipeline(s) have failed *≥ ${threshold} consecutive builds*.`,
+      },
+    },
+    { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } },
+    dashLink
+      ? { type: 'section', text: { type: 'mrkdwn', text: `:bar_chart: ${dashLink}` } }
+      : null,
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: `Digest @ ${meta.when || new Date().toISOString()} • ${SLACK.mention}`,
+        },
+      ],
+    },
+  ].filter(Boolean);
+  return { text, blocks };
+}
+
+/**
+ * Post the master-failure digest for the given failing pipelines.
+ * `failing` = array of pipeline cards (already filtered to master + >=threshold).
+ * If empty, nothing is posted. Returns { sent, skipped, reason }.
+ */
+async function postMasterDigest(failing, meta = {}) {
+  if (!failing || failing.length === 0) {
+    return { sent: false, skipped: true, reason: 'nothing-failing' };
+  }
+  const { text, blocks } = buildMasterDigest(failing, meta);
+  return postMessage(MASTER_DIGEST.channel, text, blocks);
+}
+
+module.exports = {
+  sendFailureAlert,
+  buildMessage,
+  postMessage,
+  verifyAuth,
+  buildMasterDigest,
+  postMasterDigest,
+};

@@ -243,4 +243,22 @@ function getSnapshot() {
   return SNAPSHOT;
 }
 
-module.exports = { poll, getSnapshot, ensureDiscovery, normalizeStatus };
+/**
+ * Return the master-block pipelines whose consecutiveFailures >= threshold.
+ * "Master" = every pipeline in blocks flagged isMaster (msp-master group + LKG).
+ * Sorted worst-first (most consecutive failures at the top).
+ */
+function getMasterFailures(threshold) {
+  const t = Number(threshold) || 1;
+  const masterBlocks = (SNAPSHOT.versionBlocks || []).filter((b) => b.isMaster);
+  const failing = [];
+  for (const block of masterBlocks) {
+    for (const card of block.pipelines || []) {
+      if ((card.consecutiveFailures || 0) >= t) failing.push(card);
+    }
+  }
+  failing.sort((a, b) => (b.consecutiveFailures || 0) - (a.consecutiveFailures || 0));
+  return failing;
+}
+
+module.exports = { poll, getSnapshot, getMasterFailures, ensureDiscovery, normalizeStatus };

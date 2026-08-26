@@ -2,9 +2,10 @@
 
 const http = require('http');
 const path = require('path');
-const { SETTINGS } = require('./config');
+const { SETTINGS, MASTER_DIGEST } = require('./config');
 const store = require('./store');
 const { getAsset, isEmbedded } = require('./assets');
+const { startMasterDigest, fireDigest } = require('./scheduler');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -67,6 +68,32 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, generatedAt: snap.generatedAt });
     }
 
+    // Preview which master pipelines currently meet the failure threshold.
+    if (pathname === '/api/digest/preview') {
+      const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
+      return sendJson(res, 200, {
+        threshold: MASTER_DIGEST.failThreshold,
+        channel: MASTER_DIGEST.channel,
+        times: MASTER_DIGEST.times,
+        count: failing.length,
+        failing: failing.map((c) => ({
+          title: c.title,
+          lane: c.lane,
+          consecutiveFailures: c.consecutiveFailures,
+          lastBuildNumber: c.lastBuildNumber,
+          url: c.url,
+        })),
+      });
+    }
+
+    // Manually fire the digest now (useful for testing the Slack post).
+    if (pathname === '/api/digest/test' && req.method === 'POST') {
+      await store.poll(); // ensure a fresh snapshot
+      await fireDigest('manual-test');
+      const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
+      return sendJson(res, 200, { ok: true, posted: failing.length > 0, count: failing.length });
+    }
+
     return serveStatic(req, res);
   } catch (e) {
     console.error('[server] error:', e);
@@ -95,6 +122,8 @@ server.listen(SETTINGS.port, SETTINGS.host, () => {
   console.log(`[msp-dashboard] poll interval: ${SETTINGS.pollIntervalMs / 1000}s, tracking last ${SETTINGS.buildsToTrack} builds`);
   store.poll().then((s) => {
     console.log(`[msp-dashboard] initial poll done: ${s.stats.total} pipelines, ${s.versionBlocks.length} blocks`);
+    // Start the timezone-aware master-failure digest scheduler once we have data.
+    startMasterDigest();
   }).catch((e) => console.error('[msp-dashboard] initial poll failed:', e.message));
 
   setInterval(() => {

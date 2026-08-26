@@ -151,10 +151,53 @@ const SLACK = {
   mention: process.env.SLACK_MENTION || '@msp-help',
   // Prefer an incoming webhook; fall back to bot token chat.postMessage.
   webhookUrl: process.env.SLACK_WEBHOOK_URL || '',
-  botToken: process.env.SLACK_ALERT_BOT_TOKEN || '',
+  // Bot token used with chat.postMessage. SLACK_BOT_TOKEN is the primary name;
+  // SLACK_ALERT_BOT_TOKEN kept for backward-compat.
+  botToken: process.env.SLACK_BOT_TOKEN || process.env.SLACK_ALERT_BOT_TOKEN || '',
+  // App-level token (xapp-...). Only needed for Socket Mode / inbound events;
+  // NOT used for posting. Recorded here so it can be wired later.
+  appToken: process.env.SLACK_APP_TOKEN || '',
   // Re-alert suppression window (ms) so we don't spam on every poll.
   cooldownMs: Number(process.env.SLACK_COOLDOWN_MS || 6 * 60 * 60 * 1000),
 };
+
+/**
+ * Scheduled "master pipeline health" digest.
+ *
+ * Rule: if any MASTER pipeline (the whole msp-master group — Precommit, Local
+ * LCC, GLCC — plus standalone LKG) has >= `masterFailThreshold` consecutive
+ * build failures, post the failing pipeline(s) to Slack.
+ *
+ * This is NOT a per-poll alert; it fires only at the configured local times
+ * (default 09:00 in each listed timezone), so leadership gets a predictable
+ * morning digest in both India and US-Pacific mornings.
+ */
+const MASTER_DIGEST = {
+  enabled: (process.env.MASTER_DIGEST_ENABLED || 'true') !== 'false',
+  // Consecutive-failure threshold that makes a master pipeline "report-worthy".
+  failThreshold: Number(process.env.MASTER_FAIL_THRESHOLD || 5),
+  // Channel for the digest (falls back to the general SLACK.channel).
+  channel: process.env.MASTER_DIGEST_CHANNEL || process.env.SLACK_CHANNEL || '#test-msp',
+  // Local send times as { hour, minute, tz }. Default 09:00 IST and 09:00 PT.
+  // Override with MASTER_DIGEST_TIMES="09:00 Asia/Kolkata,09:00 America/Los_Angeles".
+  times: parseDigestTimes(
+    process.env.MASTER_DIGEST_TIMES ||
+      '09:00 Asia/Kolkata,09:00 America/Los_Angeles'
+  ),
+};
+
+/** Parse "HH:MM TZ,HH:MM TZ" into [{ hour, minute, tz }]. */
+function parseDigestTimes(spec) {
+  return String(spec)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const [hm, tz] = s.split(/\s+/);
+      const [h, m] = (hm || '09:00').split(':');
+      return { hour: Number(h) || 0, minute: Number(m) || 0, tz: tz || 'UTC' };
+    });
+}
 
 const SETTINGS = {
   port: Number(process.env.PORT || 4317),
@@ -166,12 +209,53 @@ const SETTINGS = {
   httpTimeoutMs: Number(process.env.HTTP_TIMEOUT_MS || 20000),
   concurrency: Number(process.env.FETCH_CONCURRENCY || 8),
   dataDir: process.env.DATA_DIR || require('path').join(__dirname, '..', 'data'),
+  // Explicit public URL for links in Slack messages (recommended behind a
+  // proxy/DNS name). If unset, we derive it from the host's name/IP + PORT.
+  dashboardUrl: process.env.DASHBOARD_URL || '',
 };
+
+/** First non-internal IPv4 address, or null. */
+function firstLanIPv4() {
+  const os = require('os');
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const ni of ifaces[name] || []) {
+      if (ni.family === 'IPv4' && !ni.internal) return ni.address;
+    }
+  }
+  return null;
+}
+
+/**
+ * Best-effort public URL of this dashboard for use in Slack links.
+ * Priority: DASHBOARD_URL env > hostname (FQDN if resolvable) > LAN IP > localhost.
+ * When bound to a specific non-wildcard HOST, that value wins for the host part.
+ */
+function dashboardUrl() {
+  if (SETTINGS.dashboardUrl) return SETTINGS.dashboardUrl.replace(/\/+$/, '');
+  const os = require('os');
+  let host;
+  const boundHost = SETTINGS.host;
+  if (boundHost && boundHost !== '0.0.0.0' && boundHost !== '::') {
+    host = boundHost;
+  } else {
+    host = os.hostname() || firstLanIPv4() || 'localhost';
+    // Bare, non-FQDN hostnames may not resolve off-box; prefer a routable IP.
+    if (!host.includes('.') && host !== 'localhost') {
+      host = firstLanIPv4() || host;
+    }
+  }
+  const port = SETTINGS.port;
+  const portPart = port === 80 ? '' : `:${port}`;
+  return `http://${host}${portPart}`;
+}
 
 module.exports = {
   CONTROLLERS,
   STATIC_PIPELINES,
   DISCOVERY_RULES,
   SLACK,
+  MASTER_DIGEST,
   SETTINGS,
+  dashboardUrl,
 };
