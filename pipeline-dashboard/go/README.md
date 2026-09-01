@@ -54,7 +54,10 @@ the network. Set `HOST=127.0.0.1` to restrict to localhost.
 
 ```bash
 make dist    # → dist/msp-pipeline-dashboard-linux-amd64, -linux-arm64, -darwin-arm64
+make clean   # removes the local binary and dist/
 ```
+
+`dist/` is generated and gitignored. Rebuild anytime with `make dist` or `make package`.
 
 Each is fully self-contained (runtime + app + UI). Copy one file to the target
 host and run it — no Go, no Node, no `public/` directory required.

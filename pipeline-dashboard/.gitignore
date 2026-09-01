@@ -1,4 +1,7 @@
+# Generated / local-only — never install from these.
+# Real packages:  cd go && make package  →  go/dist/packages/
 node_modules/
 dist/
-data/alert-state.json
+data/
 *.log
+msp-pipeline-dashboard

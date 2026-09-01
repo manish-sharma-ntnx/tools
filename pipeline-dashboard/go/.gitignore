@@ -1,0 +1,5 @@
+# Build output (make dist / make package) and a local `make build` binary.
+/dist/
+/msp-pipeline-dashboard
+/data/
+*.log

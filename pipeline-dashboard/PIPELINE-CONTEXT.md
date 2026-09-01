@@ -288,7 +288,7 @@ pipeline-dashboard/
     packaging/               # systemd installer for the Go binary
       install.sh uninstall.sh *.service *.env make-package.sh README.txt
     Makefile README.md
-  data/            # alert-state.json (runtime)
+  # generated (gitignored, not source): dist/, go/dist/, data/, node_modules/
   PIPELINE-CONTEXT.md  PIPELINE-DESIGN.md  README.md
 ```
 

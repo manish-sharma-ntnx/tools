@@ -203,8 +203,11 @@ service user — no manual wiring needed.
 
 ```bash
 cd pipeline-dashboard
-npm run package:dist            # → dist/packages/*.tar.gz
+npm run package:dist            # → dist/packages/*.tar.gz  (generated; gitignored)
 ```
+
+Do **not** install a leftover root `dist/` tarball on a host that should run the
+Go dashboard — those Node SEA packages bake an older UI. Prefer Section A.
 
 This produces two flavors:
 
