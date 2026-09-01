@@ -147,6 +147,9 @@ const DISCOVERY_RULES = [
 ];
 
 const SLACK = {
+  // Master switch for ALL Slack posts (10-fail alerts + master digest).
+  // false = pause the channel; dashboard keeps polling. Tokens stay in place.
+  enabled: (process.env.SLACK_ENABLED || 'true') !== 'false',
   channel: process.env.SLACK_CHANNEL || '#test-msp',
   mention: process.env.SLACK_MENTION || '@msp-help',
   // Prefer an incoming webhook; fall back to bot token chat.postMessage.

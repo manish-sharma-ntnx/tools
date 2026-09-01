@@ -13,7 +13,7 @@
 
 const { MASTER_DIGEST, SLACK } = require('./config');
 const store = require('./store');
-const { postMasterDigest, verifyAuth } = require('./slack');
+const { postMasterDigest, postAllClear, verifyAuth } = require('./slack');
 
 /** Get the parts of "now" in a given IANA timezone as numbers. */
 function nowInZone(tz) {
@@ -79,6 +79,26 @@ async function fireDigest(label) {
       outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
     } to ${MASTER_DIGEST.channel}`
   );
+  return outcome;
+}
+
+/** Always attempt a Slack post (failure digest or all-clear) for /api/digest/test. */
+async function fireDigestTest() {
+  const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
+  if (!failing.length) {
+    const outcome = await postAllClear({
+      threshold: MASTER_DIGEST.failThreshold,
+      when: 'manual-test',
+    });
+    if (outcome.sent && !outcome.reason) outcome.reason = 'all-clear';
+    console.log(
+      `[digest] (manual-test) all-clear -> post ${
+        outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
+      } to ${MASTER_DIGEST.channel}`
+    );
+    return outcome;
+  }
+  return fireDigest('manual-test');
 }
 
 /** Arm one repeating daily timer for a single { hour, minute, tz } slot. */
@@ -107,7 +127,9 @@ function startMasterDigest() {
     console.log('[digest] master digest disabled (MASTER_DIGEST_ENABLED=false).');
     return;
   }
-  if (!SLACK.botToken) {
+  if (!SLACK.enabled) {
+    console.warn('[digest] Slack posting paused (SLACK_ENABLED=false). Digest will run but never post.');
+  } else if (!SLACK.botToken) {
     console.warn(
       '[digest] SLACK_BOT_TOKEN not set — digest will run but only LOG (never post). Set the bot token to enable posting.'
     );
@@ -127,4 +149,4 @@ function startMasterDigest() {
   for (const slot of MASTER_DIGEST.times) armSlot(slot);
 }
 
-module.exports = { startMasterDigest, fireDigest, msUntilNext };
+module.exports = { startMasterDigest, fireDigest, fireDigestTest, msUntilNext };

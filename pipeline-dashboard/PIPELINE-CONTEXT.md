@@ -49,12 +49,11 @@ job URL. It supports a `tree=` query param to select exactly the fields we need,
 which keeps responses tiny and fast.
 
 **All Jenkins controllers allow anonymous (read-only) access** — verified live for
-the original set (Devtest, SB Prod Controller-2, Harbinger-12, Harbinger-14). The
-newly added **SB Prod Controller-3** (`Precommit_NOS/msp-master`) is expected to be
-anonymous like its Controller-2 sibling; this must be re-verified on a live shell
-(see ledger Run 7 notes). No tokens are required to read status. TLS on the corp
-`*.ntnxdpro.com` / `*.eng.nutanix.com` controllers uses an internal CA, so the HTTP
-client is configured to not reject those certs (`rejectUnauthorized:false`) per-host.
+Devtest, SB Prod Controller-2, Harbinger-12, Harbinger-14, and **SB Prod
+Controller-3** (`Precommit_NOS/msp-master`, re-verified 2026-08-31). No tokens
+are required to read status. TLS on the corp `*.ntnxdpro.com` /
+`*.eng.nutanix.com` controllers uses an internal CA, so the HTTP client is
+configured to not reject those certs (`rejectUnauthorized:false`) per-host.
 
 Per-job call we make:
 
@@ -124,26 +123,135 @@ Rule: **if a pipeline's last 10 completed builds are all non-success**, post to
 `#test-msp` tagging `@msp-help` with the pipeline, version, lane, latest build
 number and a Jenkins deep link.
 
+A second, scheduled **master digest** posts at 09:00 IST and 09:00 US-Pacific
+when any master lane (msp-master Precommit / Local LCC / GLCC, plus standalone
+LKG) has ≥ `MASTER_FAIL_THRESHOLD` (default 5) consecutive failures. The scheduled
+run still posts nothing when the board is clean. `POST /api/digest/test` always
+attempts a Slack post: the failure digest if anything qualifies, otherwise an
+all-clear so the channel/token can be verified. The response includes `posted`,
+`count`, `reason`, `channel`, `slackEnabled`, and `hasBotToken`.
+
 Transport (in priority order, all env-configurable):
-1. `SLACK_WEBHOOK_URL` — incoming webhook (recommended, simplest).
-2. `SLACK_ALERT_BOT_TOKEN` — bot token → `chat.postMessage`.
-3. Neither set → the alert is **logged** (never silently dropped) so nothing is
-   lost while credentials are being provisioned.
+1. `SLACK_WEBHOOK_URL` — incoming webhook (10-fail alerts only).
+2. `SLACK_BOT_TOKEN` / `SLACK_ALERT_BOT_TOKEN` — bot token → `chat.postMessage`
+   (alerts + digest). Required for the digest.
+3. Neither set → the alert is **logged** (never silently dropped).
 
 A **cooldown** (`SLACK_COOLDOWN_MS`, default 6h) per-pipeline prevents re-spamming
 the channel every poll while a pipeline stays red. State persists in
 `data/alert-state.json`.
 
-> Note on tokens found in the environment: `SLACK_BOT_TOKEN` failed `auth.test`
-> (`invalid_auth`) and `SLACK_APP_TOKEN` is an app-level token (`xapp-…`, app "ASK
-> MSP") which cannot post messages. So a valid webhook or bot token must be
-> supplied via env for live posting. The rule engine and message formatting are
-> fully implemented and were exercised live (LKG 7.6.9.3 correctly triggered the
-> alert path — see run log).
+### Start / pause the channel (operator)
+
+`SLACK_ENABLED` is the master switch. Default `true`. Set `false` to pause
+**every** Slack post without removing tokens; the dashboard keeps polling.
+
+| Goal | Config (then `systemctl restart msp-pipeline-dashboard`) |
+|---|---|
+| Start posting | `SLACK_ENABLED=true` + `SLACK_BOT_TOKEN=xoxb-…` |
+| Pause all Slack (keep dashboard) | `SLACK_ENABLED=false` |
+| Pause only the daily digest | `MASTER_DIGEST_ENABLED=false` |
+| Stop the whole service | `systemctl stop msp-pipeline-dashboard` |
+
+While `SLACK_ENABLED=false`, events are logged
+(`[slack] (SLACK_ENABLED=false)…`) and **cooldown is not consumed**, so the
+next poll after resume can post immediately if a pipeline is still fully
+failing. Full install + Slack steps live in `README.md` §A / §B.
+
+> Note on tokens found in the environment (2026-08-12): `SLACK_BOT_TOKEN`
+> failed `auth.test` (`invalid_auth`) and `SLACK_APP_TOKEN` is an app-level
+> token (`xapp-…`, app "ASK MSP") which cannot post messages. A valid webhook
+> or bot token must be supplied via env for live posting. The rule engine and
+> message formatting were exercised live (LKG 7.6.9.3 triggered the alert path).
+
+---
+
+## 4b. Go rewrite + code-tracker UI (2026-08-26)
+
+The dashboard was migrated from **Node.js to Go** and the frontend was
+restyled to a light theme and then **reorganized into three tabs**
+(*MSP Pipeline Status* title): **Pipeline Status**, **Analytics**, **Alerts**
+(see §4c). Both changes are additive during the transition: the Node backend
+still exists under `server/`, and the Go port lives under `go/`.
+
+### Why Go
+- `net/http` + `crypto/tls` replace Node's `http`/`https`; the per-host TLS
+  policy (`InsecureSkipVerify` for the internal-CA corp controllers) replaces
+  `rejectUnauthorized:false`.
+- Goroutines + a semaphore give the bounded-concurrency Jenkins fan-out.
+- `time.LoadLocation` drives the DST-aware digest scheduler (no cron, no deps).
+- `//go:embed` yields a **single self-contained, statically-linked binary** with
+  the web UI baked in. This **replaces the Node SEA build entirely** (no
+  postject, no `node` copy, no glibc dependency). Verified: `file` reports
+  `statically linked`, `ldd` reports `not a dynamic executable`.
+- Zero third-party dependencies (stdlib only), like the Node original.
+
+### Parity (verified live)
+Ran the Go and Node servers side-by-side against the live controllers and diffed
+`/api/pipelines`: identical `stats`, version blocks, block labels, and every
+card's `status` / `successRate` / `consecutiveFailures` / `allFailing` /
+`completedCount`. JSON field shapes were made byte-compatible (optional strings
+and in-flight build `result` serialize as `null`; `lastTimestamp` always
+present; digest `times` use `hour`/`minute`/`tz`), so **the same `public/` UI
+runs unchanged on either backend**. All 9 endpoint smoke tests pass on the Go
+server (`/api/health`, `/api/pipelines`, `/api/alerts`, `/api/refresh`,
+`/api/digest/*`, static assets, 404).
+
+### UI mapping (timeline → our Jenkins data)
+- Master group + each `ganges-<version>` → a **component row** in the timeline.
+- Lanes map to stage columns (real Jenkins data only): `LCC → Local LCC`,
+  `GLCC → Global LCC`, `Precommit → Precommit`, `LKG → LKG square`.
+- KPI strip: **Last Successful LKG**, master-lane sub-rows, pipeline volume,
+  health, and the red **N Pipelines Failing** panel are all real.
+- The earlier commit-flow **TODO placeholders** were **removed** (Awaiting-*,
+  LKG-Builds/Tests columns; Pipeline ETA / commit-count / DIAL-CR KPIs; and the
+  CFDs / Cherry-Picks tabs and V4/Post-LKG sub-tabs). If a Gerrit/JIRA/git
+  source is wired later, reintroduce as needed.
+
+### Installer for a new system
+`go/packaging/` ships a systemd installer for the single Go binary:
+`install.sh` (verifies arch + libs, installs to `/opt`, creates the `msp-dash`
+system user, writes `/etc/msp-pipeline-dashboard.env`, enables the service),
+`uninstall.sh`, the `.service` unit template, the `.env` config, and
+`make-package.sh` which builds `dist/packages/*-linux-<arch>.tar.gz`. Because
+the binary is static, the target host needs **no Node and no runtime** — just
+`tar xzf … && sudo ./install.sh`. Build with `make -C go package` (or `dist`).
+
+---
+
+## 4c. Code Tracker tabs (2026-09-01)
+
+The live UI keeps the **Code Tracker** chrome. Top-level tabs:
+
+1. **Branches** — KPI strip + Component Pipeline Timeline (Jenkins data).
+   Branch-page `Cherry-Pick View` / `Analytics` buttons and the `V4 API` /
+   `Post-LKG` sub-tabs were removed (no data source / no use case).
+2. **CFDs**, **Analytics**, **Cherry-Picks** — empty placeholders for now.
+
+`GET /api/alerts` (alert history + frequency) remains on the backend.
+
+### Alert-history persistence (both backends)
+`data/alert-state.json` gained a `history` map keyed by pipeline alert key:
+`{ key, title, lane, version, url, count, firstAt, lastAt, timestamps[] }`
+(timestamps capped at 200/pipeline). History is recorded the moment an alert
+**fires and passes cooldown** — *regardless of whether a Slack transport is
+configured* — so the Alerts tab is meaningful even in log-only mode.
+- Go: `internal/slack/slack.go` (`recordHistory`, `GetAlertHistory`,
+  `AlertHistory`) + `internal/httpapi/handleAlerts` (computes frequency).
+- Node: `server/slack.js` (`recordHistory`, `getAlertHistory`) +
+  `server/index.js` `/api/alerts` handler (same frequency math).
+
+`GET /api/alerts` returns `{ generatedAt, pipelineCount, totalAlerts,
+cooldownMs, failThreshold, pipelines[] }` where each pipeline carries `count`,
+`perDay`, `avgGapHours`, `last7Days`, `last30Days`, plus first/last timestamps.
 
 ---
 
 ## 5. Architecture & tech choices
+
+> The original stack below describes the **Node** implementation. The **Go** port
+> mirrors it package-for-package (`go/internal/{config,jenkins,discovery,store,
+> slack,scheduler,httpapi}`, UI embedded via `go/webui`). See §4b.
 
 - **Node.js (built-ins only), zero npm dependencies.** Node v24 ships `fetch`,
   `http/https`, and `fs`, so the whole thing runs with just `node server/index.js`
@@ -163,17 +271,25 @@ the channel every poll while a pipeline stays red. State persists in
 ### File map
 ```
 pipeline-dashboard/
-  server/
+  server/                    # Node backend (original; still runnable)
     config.js      # controllers, discovery rules, Slack + settings
     jenkins.js     # HTTP JSON client (TLS-aware), folder listing, job fetch
     discovery.js   # version regex discovery + semantic version sort
     store.js       # poll loop, normalization, last-10 + alert logic, snapshot
     slack.js       # webhook/bot alerting with cooldown + persisted state
+    scheduler.js   # timezone-aware master-digest scheduler
     index.js       # zero-dep HTTP server: API + static hosting
-  public/
+  public/                    # shared web UI (code-tracker light theme)
     index.html styles.css app.js favicon.svg
+  go/                        # Go port (single self-contained binary)
+    cmd/dashboard/main.go
+    internal/{config,jenkins,discovery,store,model,slack,scheduler,httpapi}/
+    webui/web/               # UI assets embedded via go:embed (synced from public/)
+    packaging/               # systemd installer for the Go binary
+      install.sh uninstall.sh *.service *.env make-package.sh README.txt
+    Makefile README.md
   data/            # alert-state.json (runtime)
-  PIPELINE-CONTEXT.md  README.md
+  PIPELINE-CONTEXT.md  PIPELINE-DESIGN.md  README.md
 ```
 
 ### API
@@ -205,7 +321,9 @@ pipeline-dashboard/
 
 ## 7. Verification performed (live)
 
-- All 3 controllers return HTTP 200 on `/api/json` anonymously.
+- All controllers return HTTP 200 on `/api/json` anonymously, including
+  **SB Prod Controller-3** `Nupipe/Precommit_NOS/msp-master` (re-verified
+  2026-08-31: folder 21 jobs, last build #253 FAILURE, #252 SUCCESS).
 - Discovery found **19 pipelines across 14 version blocks** live.
 - `/api/pipelines` payload validated: no undefined/null leaks in any card;
   sparkline history, success rates, lanes all populate.
@@ -236,6 +354,10 @@ establishes the ledger. Update this table at the end of each future run.
 | 5 | 2026-08-12 | Patch-release default = last two trains (left N-1 newest e.g. 7.5.2, right N newest e.g. 7.6.9.3); exclude vanguard `.99`/`88` builds from defaults; rebuild+redeploy binary | ~15,000 | ~247,000 |
 | 6 | 2026-08-12 | Each patch version column always shows 3 canonical lanes (msp-precommit, Local LCC, LKG) with N/A placeholders for missing jobs; rebuild+redeploy binary | ~14,000 | ~261,000 |
 | 7 | 2026-08-12 | Relocated codebase to `Nutanix/github/tools/pipeline-dashboard`; Precommit master repointed to real job `sb-prod-controller-3 / Nupipe/Precommit_NOS/msp-master` (added `sbprod3` controller, new `precommit-master` rule, dropped synthesize-from-latest); fixed duplicate `devDependencies` in package.json; docs updated. NOTE: shell/exec environment was down this run — code+docs edited via file tools; live URL verify + rebuild + redeploy still pending. | ~18,000 | ~279,000 |
+| 8 | 2026-08-26 | Restyled UI to the internal "Code Tracker" look (light theme, top nav, KPI strip, component pipeline timeline with stage columns), mapping existing Jenkins data + TODO placeholders for commit-flow fields; full **Go port** of the backend (`go/…`, package-for-package parity, single static `go:embed` binary replacing the Node SEA build); verified live parity vs Node on `/api/pipelines` + 9 endpoint smoke tests; added a **systemd installer** for a new host (`go/packaging/`, `make package`). | ~155,000 | ~434,000 |
+| 9 | 2026-08-26 | Reorganized UI into **three tabs** (renamed *MSP Pipeline Status*): Pipeline Status (real lanes only — removed Awaiting-*/LKG-Builds/Tests columns + CFDs/Cherry-Picks tabs + V4/Post-LKG sub-tabs), **Analytics** (per-branch detailed analysis), **Alerts** (per-pipeline alert count + frequency). Added **persistent alert history** (`data/alert-state.json` `history` map) recorded on alert-fire in both backends + new `GET /api/alerts` (count, perDay, avgGapHours, last7/30Days); synced embed assets, `go vet`/build clean, verified `/api/alerts` frequency math with synthetic + live smoke test. | ~70,000 | ~504,000 |
+| 10 | 2026-08-31 | Restored repo context; live-verified Controller-3 `msp-master` (anon HTTP 200). Added `SLACK_ENABLED` pause switch (Go + Node): `false` logs only and does not consume cooldown. Documented install-on-another-host + start/pause Slack in `README.md` §A/§B, `PIPELINE-CONTEXT.md` §4, and `go/packaging/README.txt`. | ~35,000 | ~539,000 |
+| 11 | 2026-09-01 | Slack `/api/digest/test` now always posts (failure digest or all-clear) and returns `reason`/`channel`/`hasBotToken`. Code Tracker UI: dropped branch-page Cherry-Pick View + Analytics buttons and V4/Post-LKG sub-tabs; CFDs / Analytics / Cherry-Picks stay empty. | ~45,000 | ~584,000 |
 
 Notes on the Run 1 estimate: this counts the full agent session — reading skills
 and workspace, ~30 live Jenkins/Slack probe commands, authoring ~10 files

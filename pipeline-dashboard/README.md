@@ -6,11 +6,181 @@ version discovery and Slack alerting when a pipeline fails its last 10 builds.
 
 ![preview](docs/preview.png)
 
-## Setup
+> **What's new (2026-08-31)**
+> - **Slack start / pause** — `SLACK_ENABLED=true|false` in
+>   `/etc/msp-pipeline-dashboard.env`. Pause stops every channel post (10-fail
+>   alerts + daily digest) without removing tokens; the dashboard keeps polling.
+> - **SB Prod Controller-3** (`Nupipe/Precommit_NOS/msp-master`) verified live:
+>   anonymous HTTP 200.
+>
+> **Earlier (2026-08-26)** — three-tab UI (Pipeline Status / Analytics / Alerts),
+> Go port + systemd installer. Go is the recommended deploy path (Section A).
+> Node instructions stay below as reference.
 
-Two ways to run it: **install as a service on another Linux host** (recommended
-for anything long-lived), or **run ad-hoc** from a binary/source for quick local
-use. Pick one of the sections below.
+## A. Install on another Linux host (recommended)
+
+The Go build is a single statically-linked binary with the web UI embedded, so
+the target host needs **no Node, no interpreter, and no `public/` directory**.
+
+**Step 1 — Build the install package** (on any box with Go ≥ 1.23):
+
+```bash
+cd pipeline-dashboard/go
+make package                    # → dist/packages/*-linux-<arch>.tar.gz
+# (defaults to linux/amd64 + linux/arm64; TARGETS="linux/amd64" make package for one)
+```
+
+**Step 2 — Copy the tarball to the target host and install:**
+
+```bash
+scp go/dist/packages/msp-pipeline-dashboard-*-linux-amd64.tar.gz user@target-host:~
+
+# On the target host:
+tar xzf msp-pipeline-dashboard-*-linux-amd64.tar.gz
+cd msp-pipeline-dashboard-*/
+sudo ./install.sh               # verifies arch, installs to /opt, starts systemd service
+```
+
+The installer verifies the binary matches the host architecture, creates the
+locked-down `msp-dash` system user, installs `/etc/msp-pipeline-dashboard.env`
+(kept on upgrades), and enables the `msp-pipeline-dashboard` service.
+
+**Step 3 — Configure Slack (optional) and restart:**
+
+```bash
+sudo vi /etc/msp-pipeline-dashboard.env
+sudo systemctl restart msp-pipeline-dashboard
+```
+
+Minimum to actually post to the channel:
+
+```ini
+SLACK_ENABLED=true
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_CHANNEL=#test-msp
+DASHBOARD_URL=http://<this-host-fqdn-or-ip>:4317
+```
+
+Leave `SLACK_BOT_TOKEN` / `SLACK_WEBHOOK_URL` unset to run the dashboard in
+log-only mode (no channel posts). See **Section B** to start or pause Slack
+after install.
+
+**Step 4 — Open a firewall port (if reaching from another machine):**
+
+```bash
+sudo firewall-cmd --add-port=4317/tcp --permanent && sudo firewall-cmd --reload   # firewalld
+sudo ufw allow 4317/tcp                                                            # ufw
+```
+
+**Step 5 — Verify:**
+
+```bash
+curl -s http://<target-host-ip>:4317/api/health
+curl -s http://<target-host-ip>:4317/api/digest/preview      # who meets the digest threshold
+open  http://<target-host-ip>:4317/
+```
+
+Manage / remove:
+
+```bash
+systemctl status msp-pipeline-dashboard
+journalctl -u msp-pipeline-dashboard -f
+sudo ./uninstall.sh                         # PURGE=1 to also wipe config + state
+```
+
+**Run the Go build ad-hoc (no service):**
+
+```bash
+cd pipeline-dashboard/go
+make run                                    # or: go build -o msp-pipeline-dashboard ./cmd/dashboard
+PORT=4317 HOST=0.0.0.0 ./msp-pipeline-dashboard
+```
+
+See `go/README.md` for the full package layout and cross-compile targets.
+
+---
+
+## B. Start and pause Slack on the channel
+
+Two kinds of Slack messages go to `#test-msp` (or `SLACK_CHANNEL`):
+
+| Message | When it fires | How to pause just this one |
+|---|---|---|
+| **10-fail alert** | A pipeline’s last 10 completed builds are all non-success | `SLACK_ENABLED=false` (or unset the webhook/bot token) |
+| **Master digest** | 09:00 IST and 09:00 US-Pacific, only if a master lane has ≥ 5 consecutive failures | `MASTER_DIGEST_ENABLED=false` |
+
+The dashboard itself does **not** stop when Slack is paused. Jenkins polling,
+the UI, and `/api/*` keep running.
+
+### Start posting
+
+On the installed host, edit `/etc/msp-pipeline-dashboard.env`:
+
+```ini
+SLACK_ENABLED=true
+SLACK_BOT_TOKEN=xoxb-...          # Slack app needs chat:write; /invite the bot into the channel
+SLACK_CHANNEL=#test-msp
+SLACK_MENTION=@msp-help
+MASTER_DIGEST_ENABLED=true
+```
+
+Then:
+
+```bash
+sudo systemctl restart msp-pipeline-dashboard
+journalctl -u msp-pipeline-dashboard -n 30 | grep -E 'digest|slack'
+# Expect: "Slack bot authenticated as …"  (not "SLACK_ENABLED=false" or auth.test failed)
+
+# Optional: force a digest post right now (uses the real token)
+curl -s -X POST http://<host>:4317/api/digest/test
+```
+
+One-time Slack app setup: add the `chat:write` bot scope (and `chat:write.public`
+if the bot is not in the channel), reinstall the app, then
+`/invite @<bot-name>` in `#test-msp`. Never hardcode the token in git.
+
+`SLACK_APP_TOKEN` (`xapp-…`) cannot post. It is unused for outbound messages.
+
+### Pause posting (keep the dashboard up)
+
+```bash
+# Pause EVERY Slack post (alerts + digest). Tokens stay in the file.
+sudo sed -i 's/^SLACK_ENABLED=.*/SLACK_ENABLED=false/' /etc/msp-pipeline-dashboard.env
+sudo systemctl restart msp-pipeline-dashboard
+```
+
+While paused, qualifying events are **logged only** (`[slack] (SLACK_ENABLED=false)…`).
+Cooldown is not consumed, so the next poll after you resume can post immediately
+if a pipeline is still fully failing.
+
+```bash
+# Resume
+sudo sed -i 's/^SLACK_ENABLED=.*/SLACK_ENABLED=true/' /etc/msp-pipeline-dashboard.env
+sudo systemctl restart msp-pipeline-dashboard
+```
+
+Pause only the morning digest (10-fail alerts still post):
+
+```ini
+MASTER_DIGEST_ENABLED=false
+```
+
+then `sudo systemctl restart msp-pipeline-dashboard`.
+
+### Pause everything including the dashboard
+
+```bash
+sudo systemctl stop msp-pipeline-dashboard     # pause
+sudo systemctl start msp-pipeline-dashboard    # start again
+```
+
+---
+
+## Node runtime (reference)
+
+The original Node implementation still works and serves the same UI. Two ways to
+run it: **install as a service on another Linux host**, or **run ad-hoc** from a
+binary/source. Pick one of the sections below.
 
 ### Prerequisites
 
@@ -24,9 +194,9 @@ use. Pick one of the sections below.
 
 ---
 
-### A. Install as a service on another Linux host (recommended)
+### Node-1. Install as a service on another Linux host
 
-The installer sets up a `systemd` service, a config file, and a locked-down
+The Node installer sets up a `systemd` service, a config file, and a locked-down
 service user — no manual wiring needed.
 
 **Step 1 — Build the package** (on any box with Node ≥ 20):
@@ -119,10 +289,11 @@ See `packaging/README.txt` (included in each tarball) for full details.
 
 ---
 
-### B. Run ad-hoc (no service)
+### Node-2. Run ad-hoc (no service)
 
-**Option B1 — Portable binary** (no Node install needed on the target box; works
-even where the system `node` is ancient):
+**Option B1 — Portable binary (Node SEA)** — *superseded by the Go binary in
+Section A, which is smaller, statically linked, and needs no build toolchain on
+the target.* Kept for reference:
 
 ```bash
 # Build once (needs Node ≥ 20 at build time only):
@@ -157,6 +328,7 @@ the dashboard.
 | `HOST` | `0.0.0.0` | Bind address (`127.0.0.1` = localhost only) |
 | `DASHBOARD_URL` | auto (host name/IP + port) | Public URL for the "Open dashboard" link in Slack |
 | `POLL_INTERVAL_MS` | `180000` | Status poll cadence |
+| `SLACK_ENABLED` | `true` | Master switch: `false` pauses **all** Slack posts; dashboard stays up |
 | `SLACK_BOT_TOKEN` | — | Bot token (`xoxb-…`) used with `chat.postMessage` — required for the master digest |
 | `SLACK_APP_TOKEN` | — | App-level token (`xapp-…`); only for Socket Mode later, cannot post |
 | `SLACK_ALERT_BOT_TOKEN` | — | Legacy alias for `SLACK_BOT_TOKEN` |
@@ -164,7 +336,7 @@ the dashboard.
 | `SLACK_CHANNEL` | `#test-msp` | Alert/digest channel |
 | `SLACK_MENTION` | `@msp-help` | Group to tag |
 | `SLACK_COOLDOWN_MS` | `21600000` | Per-pipeline re-alert suppression (6h) |
-| `MASTER_DIGEST_ENABLED` | `true` | Toggle the scheduled master digest |
+| `MASTER_DIGEST_ENABLED` | `true` | Toggle the scheduled master digest only |
 | `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures that make a master pipeline report-worthy |
 | `MASTER_DIGEST_CHANNEL` | `SLACK_CHANNEL` | Channel for the digest |
 | `MASTER_DIGEST_TIMES` | `09:00 Asia/Kolkata,09:00 America/Los_Angeles` | Daily post times (`HH:MM TZ`, DST-aware) |
@@ -220,7 +392,8 @@ poll loop (every 3 min) ──► in-memory snapshot (per-pipeline consecutiveFa
 # See who currently meets the threshold (no post):
 curl -s http://<host>:4317/api/digest/preview
 
-# Force a digest post right now (uses the real bot token):
+# Force a digest post right now (uses the real bot token).
+# Posts the failing-master digest, or an all-clear if nothing meets the threshold:
 curl -s -X POST http://<host>:4317/api/digest/test
 ```
 
@@ -243,6 +416,7 @@ decisions.
 ## API
 
 - `GET /api/pipelines` — full snapshot JSON
+- `GET /api/alerts` — per-pipeline alert history + frequency (count, perDay, avgGapHours, last7Days, last30Days)
 - `POST /api/refresh` — force re-discovery + poll
 - `GET /api/health` — liveness
 - `GET /api/digest/preview` — master pipelines currently ≥ failure threshold (no post)

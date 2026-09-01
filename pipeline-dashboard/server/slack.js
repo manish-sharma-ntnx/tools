@@ -7,12 +7,50 @@ const { SLACK, MASTER_DIGEST, SETTINGS, dashboardUrl } = require('./config');
 
 const STATE_FILE = path.join(SETTINGS.dataDir, 'alert-state.json');
 
+// Cap stored timestamps per pipeline so the state file stays bounded.
+const MAX_TIMESTAMPS_PER_PIPELINE = 200;
+
 function loadState() {
+  let state;
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   } catch {
-    return { lastAlertAt: {} };
+    state = {};
   }
+  if (!state || typeof state !== 'object') state = {};
+  if (!state.lastAlertAt) state.lastAlertAt = {};
+  if (!state.history) state.history = {};
+  return state;
+}
+
+/**
+ * Record a fired-alert event for a pipeline (mutates `state`, caller persists).
+ * History entry: { key, title, lane, version, url, count, firstAt, lastAt, timestamps[] }.
+ */
+function recordHistory(state, entry, now) {
+  let h = state.history[entry.key];
+  if (!h) {
+    h = { key: entry.key, firstAt: now, count: 0, timestamps: [] };
+    state.history[entry.key] = h;
+  }
+  h.title = entry.title;
+  h.lane = entry.lane;
+  h.version = entry.version;
+  h.url = entry.url;
+  h.count += 1;
+  h.lastAt = now;
+  h.timestamps.push(now);
+  if (h.timestamps.length > MAX_TIMESTAMPS_PER_PIPELINE) {
+    h.timestamps = h.timestamps.slice(-MAX_TIMESTAMPS_PER_PIPELINE);
+  }
+}
+
+/** Return a copy of the per-pipeline alert history, newest-alert-first. */
+function getAlertHistory() {
+  const state = loadState();
+  return Object.values(state.history)
+    .map((h) => ({ ...h, timestamps: [...(h.timestamps || [])] }))
+    .sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
 }
 
 function saveState(state) {
@@ -79,12 +117,22 @@ function buildMessage(entry) {
  * Returns { sent, skipped, reason }.
  */
 async function sendFailureAlert(entry) {
+  if (!SLACK.enabled) {
+    console.warn(`[slack] (SLACK_ENABLED=false) would alert -> ${SLACK.channel}: ${entry.title}`);
+    return { sent: false, skipped: true, reason: 'disabled' };
+  }
   const state = loadState();
   const now = Date.now();
   const last = state.lastAlertAt[entry.key] || 0;
   if (now - last < SLACK.cooldownMs) {
     return { sent: false, skipped: true, reason: 'cooldown' };
   }
+
+  // The alert fires now: persist cooldown stamp + history regardless of whether
+  // a Slack transport is configured, so the Alerts tab reflects real events.
+  state.lastAlertAt[entry.key] = now;
+  recordHistory(state, entry, now);
+  saveState(state);
 
   const text = buildMessage(entry);
   let result;
@@ -105,8 +153,6 @@ async function sendFailureAlert(entry) {
 
   const ok = result.status >= 200 && result.status < 300 && !/\"ok\":false/.test(result.body || '');
   if (ok) {
-    state.lastAlertAt[entry.key] = now;
-    saveState(state);
     return { sent: true, skipped: false };
   }
   console.error(`[slack] send failed status=${result.status} body=${result.body}`);
@@ -139,6 +185,10 @@ async function verifyAuth() {
  * `text` is the fallback/notification text; `blocks` is optional Block Kit.
  */
 async function postMessage(channel, text, blocks) {
+  if (!SLACK.enabled) {
+    console.warn(`[slack] (SLACK_ENABLED=false) would post -> ${channel}:\n${text}`);
+    return { sent: false, skipped: true, reason: 'disabled' };
+  }
   if (!SLACK.botToken) {
     console.warn(`[slack] (no SLACK_BOT_TOKEN) would post -> ${channel}:\n${text}`);
     return { sent: false, skipped: true, reason: 'no-bot-token' };
@@ -153,8 +203,15 @@ async function postMessage(channel, text, blocks) {
   const ok =
     result.status >= 200 && result.status < 300 && !/"ok"\s*:\s*false/.test(result.body || '');
   if (!ok) {
-    console.error(`[slack] postMessage failed status=${result.status} body=${result.body}`);
-    return { sent: false, skipped: false, reason: `http ${result.status}` };
+    let slackErr = '';
+    try {
+      slackErr = JSON.parse(result.body || '{}').error || '';
+    } catch (_) {
+      slackErr = '';
+    }
+    const reason = slackErr || (result.body && result.status === 0 ? result.body : `http ${result.status}`);
+    console.error(`[slack] postMessage failed ${reason} body=${result.body}`);
+    return { sent: false, skipped: false, reason };
   }
   return { sent: true, skipped: false };
 }
@@ -225,11 +282,45 @@ async function postMasterDigest(failing, meta = {}) {
   return postMessage(MASTER_DIGEST.channel, text, blocks);
 }
 
+function buildAllClear(meta = {}) {
+  const threshold = meta.threshold || MASTER_DIGEST.failThreshold;
+  const dashUrl = meta.dashboardUrl || dashboardUrl();
+  const when = meta.when || new Date().toISOString();
+  const text = `:white_check_mark: MSP Master Pipeline Digest — all clear\nNo master pipeline is failing ≥ ${threshold} consecutive builds.${
+    dashUrl ? `\nDashboard: ${dashUrl}` : ''
+  }`;
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: 'MSP Master Pipeline Digest', emoji: true } },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `:white_check_mark: All clear — no master pipeline is failing *≥ ${threshold} consecutive builds*.`,
+      },
+    },
+    dashUrl
+      ? { type: 'section', text: { type: 'mrkdwn', text: `:bar_chart: <${dashUrl}|Open MSP Pipeline Dashboard>` } }
+      : null,
+    {
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `Test post @ ${when} • ${SLACK.mention}` }],
+    },
+  ].filter(Boolean);
+  return { text, blocks };
+}
+
+async function postAllClear(meta = {}) {
+  const { text, blocks } = buildAllClear(meta);
+  return postMessage(MASTER_DIGEST.channel, text, blocks);
+}
+
 module.exports = {
   sendFailureAlert,
+  getAlertHistory,
   buildMessage,
   postMessage,
   verifyAuth,
   buildMasterDigest,
   postMasterDigest,
+  postAllClear,
 };

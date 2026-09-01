@@ -5,7 +5,9 @@ const path = require('path');
 const { SETTINGS, MASTER_DIGEST } = require('./config');
 const store = require('./store');
 const { getAsset, isEmbedded } = require('./assets');
-const { startMasterDigest, fireDigest } = require('./scheduler');
+const { startMasterDigest, fireDigestTest } = require('./scheduler');
+const { getAlertHistory } = require('./slack');
+const { SLACK } = require('./config');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -68,6 +70,48 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, generatedAt: snap.generatedAt });
     }
 
+    // Per-pipeline alert history + computed frequency stats.
+    if (pathname === '/api/alerts') {
+      const hist = getAlertHistory();
+      const now = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+      const round2 = (f) => Math.round(f * 100) / 100;
+      let totalAlerts = 0;
+      const pipelines = hist.map((h) => {
+        totalAlerts += h.count;
+        const ts = h.timestamps || [];
+        const last7Days = ts.filter((t) => now - t <= 7 * dayMs).length;
+        const last30Days = ts.filter((t) => now - t <= 30 * dayMs).length;
+        const spanDays = Math.max(1, (now - h.firstAt) / dayMs);
+        const perDay = round2(h.count / spanDays);
+        const avgGapHours =
+          h.count > 1 ? round2((h.lastAt - h.firstAt) / (h.count - 1) / (60 * 60 * 1000)) : 0;
+        return {
+          key: h.key,
+          title: h.title,
+          lane: h.lane,
+          version: h.version,
+          url: h.url,
+          count: h.count,
+          firstAt: h.firstAt,
+          lastAt: h.lastAt,
+          last7Days,
+          last30Days,
+          perDay,
+          avgGapHours,
+          timestamps: ts,
+        };
+      });
+      return sendJson(res, 200, {
+        generatedAt: now,
+        pipelineCount: pipelines.length,
+        totalAlerts,
+        cooldownMs: SLACK.cooldownMs,
+        failThreshold: MASTER_DIGEST.failThreshold,
+        pipelines,
+      });
+    }
+
     // Preview which master pipelines currently meet the failure threshold.
     if (pathname === '/api/digest/preview') {
       const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
@@ -89,9 +133,17 @@ const server = http.createServer(async (req, res) => {
     // Manually fire the digest now (useful for testing the Slack post).
     if (pathname === '/api/digest/test' && req.method === 'POST') {
       await store.poll(); // ensure a fresh snapshot
-      await fireDigest('manual-test');
       const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
-      return sendJson(res, 200, { ok: true, posted: failing.length > 0, count: failing.length });
+      const outcome = await fireDigestTest();
+      return sendJson(res, 200, {
+        ok: true,
+        posted: !!outcome.sent,
+        count: failing.length,
+        reason: outcome.reason || '',
+        channel: MASTER_DIGEST.channel,
+        slackEnabled: SLACK.enabled,
+        hasBotToken: !!SLACK.botToken,
+      });
     }
 
     return serveStatic(req, res);
