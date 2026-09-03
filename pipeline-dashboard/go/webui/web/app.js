@@ -33,17 +33,13 @@ const VIEW_TITLE = {
   cherry: 'Cherry-Picks',
 };
 
-// Reference stage columns → the lanes we actually track.
-// Awaiting-* and LKG-Builds/Tests are commit-flow stages we can't derive from
-// Jenkins job status alone, so they show TODO placeholders. The lanes we own
-// (Precommit≈pre-LCC, LCC=Local LCC, GLCC=Global LCC, LKG) get real cards.
+// Stage columns map to Jenkins lanes we actually track.
 const STAGES = [
-  { id: 'awaiting-lcc', label: 'AWAITING LCC', lane: 'Precommit', kind: 'lane' },
+  { id: 'precommit', label: 'PRECOMMIT PIPELINE', lane: 'Precommit', kind: 'lane' },
   { id: 'local-lcc', label: 'LOCAL LCC', lane: 'LCC', kind: 'lane' },
   { id: 'global-lcc', label: 'GLOBAL LCC', lane: 'GLCC', kind: 'lane' },
-  { id: 'awaiting-lkg', label: 'AWAITING LKG', lane: null, kind: 'await' },
-  { id: 'lkg-builds', label: 'LKG-BUILDS', lane: null, kind: 'await' },
-  { id: 'lkg-tests', label: 'LKG-TESTS', lane: null, kind: 'await' },
+  { id: 'smoke', label: 'SMOKE', lane: 'Smoke', kind: 'lane' },
+  { id: 'lkg', label: 'LKG', lane: 'LKG', kind: 'lane' },
 ];
 
 /* ---------- helpers ---------- */
@@ -124,13 +120,10 @@ function buildComponents(data) {
 
   const masterBlock = blocks.find((b) => b.isMaster);
   if (masterBlock) {
-    const mspMaster = masterBlock.pipelines.filter((p) => p.masterGroup === 'msp-master');
-    const lkg = masterBlock.pipelines.filter((p) => p.masterGroup !== 'msp-master');
     rows.push({
       name: 'master',
       tag: 'MAIN',
-      lanes: mspMaster,
-      lkgCard: lkg[0] || null,
+      lanes: masterBlock.pipelines,
       isMaster: true,
     });
   }
@@ -139,8 +132,7 @@ function buildComponents(data) {
     rows.push({
       name: `ganges-${b.version}`,
       tag: b.train ? `${b.train}` : 'COMP',
-      lanes: b.pipelines.filter((p) => p.lane !== 'LKG'),
-      lkgCard: b.pipelines.find((p) => p.lane === 'LKG') || null,
+      lanes: b.pipelines,
       isMaster: false,
       version: b.version,
     });
@@ -159,14 +151,11 @@ function renderKpis(data) {
   const cards = allCards(data);
   const s = data.stats || {};
 
-  const lkgCards = cards.filter((c) => c.lane === 'LKG');
-  const lastLkg = lkgCards
-    .filter((c) => c.status === 'success' && c.lastTimestamp)
-    .sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0))[0];
-
   const masterBlock = (data.versionBlocks || []).find((b) => b.isMaster);
   const masterLanes = masterBlock ? masterBlock.pipelines : [];
-  const smokeRows = ['Precommit', 'LCC', 'GLCC']
+  // First widget is *master* LKG, not the newest successful LKG of any train.
+  const masterLkg = masterLanes.find((p) => p.lane === 'LKG') || null;
+  const smokeRows = ['Precommit', 'LCC', 'GLCC', 'Smoke']
     .map((lane) => masterLanes.find((p) => p.lane === lane))
     .filter(Boolean);
 
@@ -177,12 +166,12 @@ function renderKpis(data) {
     <div class="kpi-card">
       <div class="kpi-eyebrow">Last Successful LKG</div>
       ${
-        lastLkg
-          ? `<div class="kpi-big">${timeAgo(lastLkg.lastTimestamp)}</div>
-             <div class="kpi-sub">${fmtClock(lastLkg.lastTimestamp)}</div>
-             <a class="kpi-link" href="${lastLkg.url}" target="_blank" rel="noopener">View Build →</a>`
+        masterLkg
+          ? `<div class="kpi-big">${timeAgo(masterLkg.lastTimestamp)}</div>
+             <div class="kpi-sub">${fmtClock(masterLkg.lastTimestamp)} · ${masterLkg.subtitle || 'master'}</div>
+             <a class="kpi-link" href="${masterLkg.url}" target="_blank" rel="noopener">View Build →</a>`
           : `<div class="kpi-big red">none</div>
-             <div class="kpi-sub">no successful LKG in window</div>`
+             <div class="kpi-sub">master LKG not discovered</div>`
       }
       <div class="kpi-rows">
         <div class="kpi-rowsub" style="font-weight:700;letter-spacing:.5px;">SMOKE / DIAL</div>
@@ -290,32 +279,15 @@ function laneCell(card) {
   </div>`;
 }
 
-function awaitCell() {
-  return `<div class="stage-cell empty">
-    <span class="await">◷</span>
-    <div class="todo-hint">TODO</div>
-  </div>`;
-}
-
-function lkgSquare(card) {
-  const st = card ? card.status : 'unknown';
-  const title = card ? `${STATUS_LABEL[st] || st} · #${card.lastBuildNumber ?? '—'}` : 'no LKG job';
-  const link = card && card.url ? `href="${card.url}" target="_blank" rel="noopener"` : '';
-  return `<div class="tl-lkg-cell"><a ${link} title="${title}"><span class="lkg-square ${st}"></span></a></div>`;
-}
-
 function componentRow(row, idx) {
   const crMeta = row.isMaster
     ? `<span class="cr">master</span>`
     : `<span class="cr">${row.version || ''}</span>`;
-  const anyFail = row.lanes.some((p) => p.allFailing) || (row.lkgCard && row.lkgCard.allFailing);
+  const anyFail = row.lanes.some((p) => p.allFailing);
 
-  const stageCells = STAGES.map((stage) => {
-    if (stage.kind === 'lane') return laneCell(cardForLane(row, stage.lane));
-    return awaitCell();
-  }).join('');
+  const stageCells = STAGES.map((stage) => laneCell(cardForLane(row, stage.lane))).join('');
 
-  const laneCards = [...row.lanes, ...(row.lkgCard ? [row.lkgCard] : [])];
+  const laneCards = row.lanes;
   const detail = laneCards
     .map((c) => {
       const rc = rateClass(c.successRate);
@@ -344,7 +316,6 @@ function componentRow(row, idx) {
         </div>
       </div>
       ${stageCells}
-      ${lkgSquare(row.lkgCard)}
     </div>
     <div class="tl-detail">
       <div class="tl-detail-grid">${detail || '<div class="tab-empty">No lane data.</div>'}</div>
@@ -435,7 +406,7 @@ function renderMeta(data) {
     controllers.add(p.controller);
     if (p.status === 'unreachable') down.add(p.controller);
   }
-  const labels = { devtest: 'Devtest', sbprod: 'SB Prod-2', sbprod3: 'SB Prod-3', harbinger: 'Harbinger-14', harbinger12: 'Harbinger-12' };
+  const labels = { devtest: 'Devtest', sbprod1: 'SB Prod-1', sbprod: 'SB Prod-2', sbprod3: 'SB Prod-3', harbinger: 'Harbinger-14', harbinger12: 'Harbinger-12' };
   $('#foot-controllers').innerHTML = [...controllers]
     .map((c) => `<span class="ctrl-chip ${down.has(c) ? 'down' : ''}"><span class="cdot"></span>${labels[c] || c}</span>`)
     .join('');

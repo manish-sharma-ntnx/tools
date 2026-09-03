@@ -92,23 +92,44 @@ function postJson(url, headers, payload) {
   });
 }
 
-/** Build the alert message text for a failing pipeline. */
+/** Build the alert text + Block Kit for a failing pipeline (Jenkins + dashboard). */
 function buildMessage(entry) {
-  const mention = SLACK.mention.startsWith('@')
-    ? `<!subteam^${''}|${SLACK.mention}>`.includes('subteam^|')
-      ? SLACK.mention // fallback plain text if no group id
-      : SLACK.mention
-    : SLACK.mention;
-
+  const dashUrl = dashboardUrl();
+  const buildNo = entry.lastBuildNumber != null ? `#${entry.lastBuildNumber}` : '—';
   const lines = [
     `:rotating_light: *MSP Pipeline Alert* ${SLACK.mention}`,
     `*${entry.title}* has *failed the last ${entry.window} consecutive builds*.`,
     entry.version && entry.version !== 'master' ? `Version: \`${entry.version}\`` : null,
     `Lane: \`${entry.lane}\``,
-    `Latest build: #${entry.lastBuildNumber} — ${entry.lastResult}`,
-    `<${entry.url}|Open in Jenkins>`,
+    `Latest build: ${buildNo} — ${entry.lastResult}`,
+    entry.url ? `<${entry.url}|Open in Jenkins>` : null,
+    dashUrl ? `Dashboard: ${dashUrl}` : null,
   ].filter(Boolean);
-  return lines.join('\n');
+
+  const detail = [
+    entry.version && entry.version !== 'master' ? `Version: \`${entry.version}\`` : null,
+    `Lane: \`${entry.lane}\``,
+    `Latest build: ${buildNo} — ${entry.lastResult}`,
+    entry.url ? `<${entry.url}|Jenkins>` : null,
+  ].filter(Boolean);
+
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: 'MSP Pipeline Alert', emoji: true } },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*${entry.title}* has *failed the last ${entry.window} consecutive builds*.`,
+      },
+    },
+    { type: 'section', text: { type: 'mrkdwn', text: detail.join('\n') } },
+    dashUrl
+      ? { type: 'section', text: { type: 'mrkdwn', text: `:bar_chart: <${dashUrl}|Open MSP Pipeline Dashboard>` } }
+      : null,
+    { type: 'context', elements: [{ type: 'mrkdwn', text: SLACK.mention }] },
+  ].filter(Boolean);
+
+  return { text: lines.join('\n'), blocks };
 }
 
 /**
@@ -134,16 +155,16 @@ async function sendFailureAlert(entry) {
   recordHistory(state, entry, now);
   saveState(state);
 
-  const text = buildMessage(entry);
+  const { text, blocks } = buildMessage(entry);
   let result;
 
   if (SLACK.webhookUrl) {
-    result = await postJson(SLACK.webhookUrl, {}, { channel: SLACK.channel, text });
+    result = await postJson(SLACK.webhookUrl, {}, { channel: SLACK.channel, text, blocks });
   } else if (SLACK.botToken) {
     result = await postJson(
       'https://slack.com/api/chat.postMessage',
       { Authorization: `Bearer ${SLACK.botToken}` },
-      { channel: SLACK.channel, text, link_names: true }
+      { channel: SLACK.channel, text, link_names: true, blocks }
     );
   } else {
     // No transport configured: log so the alert is not silently lost.

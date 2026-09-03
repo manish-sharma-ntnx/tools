@@ -19,11 +19,14 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 | Master (msp-master) | Precommit | SB Prod Controller-3 | `Nupipe/Precommit_NOS/msp-master` |
 | Master (msp-master) | Local LCC | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-master` |
 | Master (msp-master) | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-master` |
+| Master (msp-master) | Smoke | SB Prod Controller-1 | `Postcommit/master` |
 | Master (standalone) | LKG | Harbinger Prod-14 | `Nupipe/LKG/master` |
 | Patch release | Precommit | Harbinger Prod-12 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
 | Patch release | Local LCC | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-ganges-<ver>` |
 | Patch release | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-ganges-<ver>` |
-| Patch release | LKG | Harbinger Prod-14 | `Nupipe/LKG/ganges-<ver>-stable` |
+| Patch release | Smoke | SB Prod Controller-1 | `Postcommit/ganges-<ver>-stable` |
+| Patch release | LKG (current) | SB Prod Controller-1 | `Nupipe/LKG/ganges-<ver>-stable` |
+| Patch release | LKG (older 7.5.x) | Harbinger Prod-14 | `Nupipe/LKG/ganges-<ver>-stable` |
 
 > **Master section semantics:** Precommit + Local LCC + GLCC are stages of the
 > `msp-master` pipeline and are grouped together; **LKG** is a separate mainline
@@ -39,6 +42,16 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 > patch-release comparison only (they no longer contribute a master card).
 >
 > The Devtest `msp-controller-precommit` job remains the Devtest card.
+>
+> **LKG controller split (2026-09-01):** master LKG remains Harbinger-14
+> `Nupipe/LKG/master`. Versioned LKG for current trains (7.6.x, **7.7**, …)
+> lives on **SB Prod Controller-1** `Nupipe/LKG/ganges-<ver>-stable`. Fetch
+> latest did not show 7.7 before because discovery only listed Harbinger-14,
+> which has no `ganges-7.7-stable` job. The `-stable-pc` sibling is still
+> excluded (same as other `-pc` LKG jobs).
+>
+> **Smoke** is `Postcommit` on SB Prod Controller-1 (`master` +
+> `ganges-<ver>-stable`).
 
 ---
 
@@ -49,9 +62,9 @@ job URL. It supports a `tree=` query param to select exactly the fields we need,
 which keeps responses tiny and fast.
 
 **All Jenkins controllers allow anonymous (read-only) access** — verified live for
-Devtest, SB Prod Controller-2, Harbinger-12, Harbinger-14, and **SB Prod
-Controller-3** (`Precommit_NOS/msp-master`, re-verified 2026-08-31). No tokens
-are required to read status. TLS on the corp `*.ntnxdpro.com` /
+Devtest, SB Prod Controller-1 (Postcommit + LKG), SB Prod Controller-2,
+Harbinger-12, Harbinger-14, and **SB Prod Controller-3** (`Precommit_NOS/msp-master`,
+re-verified 2026-08-31). No tokens are required to read status. TLS on the corp `*.ntnxdpro.com` /
 `*.eng.nutanix.com` controllers uses an internal CA, so the HTTP client is
 configured to not reject those certs (`rejectUnauthorized:false`) per-host.
 
@@ -121,7 +134,8 @@ The UI groups pipelines into **blocks**:
 
 Rule: **if a pipeline's last 10 completed builds are all non-success**, post to
 `#test-msp` tagging `@msp-help` with the pipeline, version, lane, latest build
-number and a Jenkins deep link.
+number, a Jenkins deep link, and an **Open MSP Pipeline Dashboard** link
+(same Block Kit shape as the master digest).
 
 A second, scheduled **master digest** posts at 09:00 IST and 09:00 US-Pacific
 when any master lane (msp-master Precommit / Local LCC / GLCC, plus standalone
@@ -199,8 +213,8 @@ server (`/api/health`, `/api/pipelines`, `/api/alerts`, `/api/refresh`,
 
 ### UI mapping (timeline → our Jenkins data)
 - Master group + each `ganges-<version>` → a **component row** in the timeline.
-- Lanes map to stage columns (real Jenkins data only): `LCC → Local LCC`,
-  `GLCC → Global LCC`, `Precommit → Precommit`, `LKG → LKG square`.
+- Lanes map to stage columns (real Jenkins data only): `Precommit → Precommit pipeline`,
+  `LCC → Local LCC`, `GLCC → Global LCC`, `Smoke → Smoke`, `LKG → LKG`.
 - KPI strip: **Last Successful LKG**, master-lane sub-rows, pipeline volume,
   health, and the red **N Pipelines Failing** panel are all real.
 - The earlier commit-flow **TODO placeholders** were **removed** (Awaiting-*,
@@ -221,11 +235,13 @@ the binary is static, the target host needs **no Node and no runtime** — just
 
 ## 4c. Code Tracker tabs (2026-09-01)
 
-The live UI keeps the **Code Tracker** chrome. Top-level tabs:
+The live UI keeps the **Code Tracker** chrome. Timeline columns are the real
+Jenkins lanes: **Precommit pipeline**, **Local LCC**, **Global LCC**, **Smoke**,
+**LKG**. Top-level tabs:
 
 1. **Branches** — KPI strip + Component Pipeline Timeline (Jenkins data).
-   Branch-page `Cherry-Pick View` / `Analytics` buttons and the `V4 API` /
-   `Post-LKG` sub-tabs were removed (no data source / no use case).
+   The first KPI ("Last Successful LKG") links to **master LKG**
+   (`Nupipe/LKG/master`), not the newest successful patch LKG.
 2. **CFDs**, **Analytics**, **Cherry-Picks** — empty placeholders for now.
 
 `GET /api/alerts` (alert history + frequency) remains on the backend.
@@ -358,6 +374,8 @@ establishes the ledger. Update this table at the end of each future run.
 | 9 | 2026-08-26 | Reorganized UI into **three tabs** (renamed *MSP Pipeline Status*): Pipeline Status (real lanes only — removed Awaiting-*/LKG-Builds/Tests columns + CFDs/Cherry-Picks tabs + V4/Post-LKG sub-tabs), **Analytics** (per-branch detailed analysis), **Alerts** (per-pipeline alert count + frequency). Added **persistent alert history** (`data/alert-state.json` `history` map) recorded on alert-fire in both backends + new `GET /api/alerts` (count, perDay, avgGapHours, last7/30Days); synced embed assets, `go vet`/build clean, verified `/api/alerts` frequency math with synthetic + live smoke test. | ~70,000 | ~504,000 |
 | 10 | 2026-08-31 | Restored repo context; live-verified Controller-3 `msp-master` (anon HTTP 200). Added `SLACK_ENABLED` pause switch (Go + Node): `false` logs only and does not consume cooldown. Documented install-on-another-host + start/pause Slack in `README.md` §A/§B, `PIPELINE-CONTEXT.md` §4, and `go/packaging/README.txt`. | ~35,000 | ~539,000 |
 | 11 | 2026-09-01 | Slack `/api/digest/test` now always posts (failure digest or all-clear) and returns `reason`/`channel`/`hasBotToken`. Code Tracker UI: dropped branch-page Cherry-Pick View + Analytics buttons and V4/Post-LKG sub-tabs; CFDs / Analytics / Cherry-Picks stay empty. | ~45,000 | ~584,000 |
+| 12 | 2026-09-01 | Master KPI links to master LKG (not newest patch). Added Smoke column (Controller-1 `Postcommit`). Renamed AWAITING LCC → Precommit pipeline. Master LKG as a full column. Discover Controller-1 LKG so 7.7 appears. | ~40,000 | ~624,000 |
+| 13 | 2026-09-03 | 10-fail Slack alert now includes the dashboard link + Block Kit (same shape as the 09:00 digest). | ~12,000 | ~636,000 |
 
 Notes on the Run 1 estimate: this counts the full agent session — reading skills
 and workspace, ~30 live Jenkins/Slack probe commands, authoring ~10 files

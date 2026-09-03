@@ -23,6 +23,12 @@ const CONTROLLERS = {
     baseUrl: 'http://10.37.10.188:8080',
     insecure: false,
   },
+  sbprod1: {
+    id: 'sbprod1',
+    label: 'SB Prod Controller-1',
+    baseUrl: 'https://phx-p10y-sb-prod-jenkins-controller-1.corp.p10y.ntnxdpro.com',
+    insecure: true,
+  },
   sbprod: {
     id: 'sbprod',
     label: 'SB Prod Controller-2',
@@ -131,6 +137,22 @@ const DISCOVERY_RULES = [
     jobSuffix: '-pc',
   },
   {
+    // Postcommit / smoke. Master job is on SB Prod Controller-1.
+    id: 'smoke',
+    controller: 'sbprod1',
+    parent: ['Postcommit'],
+    label: 'Smoke',
+    shortLabel: 'Smoke',
+    lane: 'Smoke',
+    masterGroup: 'msp-master',
+    masterName: 'master',
+    versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable$/,
+    jobPrefix: 'ganges-',
+    jobSuffix: '-stable',
+  },
+  {
+    // Master LKG stays on Harbinger-14 (Nupipe/LKG/master). Older patch
+    // trains (7.5.x) still live here; newer trains moved to sbprod1.
     id: 'lkg',
     controller: 'harbinger',
     parent: ['Nupipe', 'LKG'],
@@ -140,6 +162,22 @@ const DISCOVERY_RULES = [
     masterGroup: 'lkg',
     masterName: 'master',
     // ganges-7.6-stable  (exclude the -pc and other trains like files-/ncc-)
+    versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable$/,
+    jobPrefix: 'ganges-',
+    jobSuffix: '-stable',
+  },
+  {
+    // Current LKG home (7.6.x, 7.7, …). Versioned jobs only — master LKG is
+    // the harbinger-14 rule above. Listed after `lkg` so overlapping versions
+    // prefer this controller.
+    id: 'lkg-c1',
+    controller: 'sbprod1',
+    parent: ['Nupipe', 'LKG'],
+    label: 'LKG',
+    shortLabel: 'LKG',
+    lane: 'LKG',
+    masterGroup: 'lkg',
+    masterName: null,
     versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable$/,
     jobPrefix: 'ganges-',
     jobSuffix: '-stable',

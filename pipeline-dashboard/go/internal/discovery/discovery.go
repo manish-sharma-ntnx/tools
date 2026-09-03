@@ -123,7 +123,8 @@ func DiscoverPipelines() Result {
 			}
 		}
 
-		// Version-scoped jobs.
+		// Version-scoped jobs. Later rules win on the same version+lane so
+		// controller-1 LKG replaces harbinger-14 for overlapping trains.
 		for _, j := range res.Jobs {
 			m := rule.VersionRegex.FindStringSubmatch(j.Name)
 			if m == nil || len(m) < 2 {
@@ -134,7 +135,7 @@ func DiscoverPipelines() Result {
 			if mg == "" {
 				mg = "other"
 			}
-			versions[version] = append(versions[version], Meta{
+			upsertVersionJob(versions, Meta{
 				Key:         rule.ID + ":" + version,
 				Controller:  rule.Controller,
 				Path:        append(append([]string{}, rule.Parent...), j.Name),
@@ -155,6 +156,20 @@ func DiscoverPipelines() Result {
 		DiscoveredAt: time.Now().UnixMilli(),
 		ErrorList:    errs,
 	}
+}
+
+// upsertVersionJob records a version-scoped job. A later rule with the same
+// version+lane replaces the earlier one (used when LKG moved controllers).
+func upsertVersionJob(versions map[string][]Meta, meta Meta) {
+	list := versions[meta.Version]
+	for i, existing := range list {
+		if existing.Lane == meta.Lane {
+			list[i] = meta
+			versions[meta.Version] = list
+			return
+		}
+	}
+	versions[meta.Version] = append(list, meta)
 }
 
 // SortedVersions returns version keys newest-first.

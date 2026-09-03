@@ -67,13 +67,14 @@ async function discoverPipelines() {
       });
     }
 
-    // Version-scoped jobs.
+    // Version-scoped jobs. Later rules win on the same version+lane so
+    // controller-1 LKG replaces harbinger-14 for overlapping trains.
     for (const job of res.jobs) {
       const m = rule.versionRegex.exec(job.name);
       if (!m) continue;
       const version = m[1];
       if (!versions[version]) versions[version] = [];
-      versions[version].push({
+      const meta = {
         key: `${rule.id}:${version}`,
         controller: rule.controller,
         path: [...rule.parent, job.name],
@@ -84,7 +85,10 @@ async function discoverPipelines() {
         title: `${rule.shortLabel} ${version}`,
         subtitle: job.name,
         version,
-      });
+      };
+      const idx = versions[version].findIndex((p) => p.lane === meta.lane);
+      if (idx >= 0) versions[version][idx] = meta;
+      else versions[version].push(meta);
     }
 
     // Synthesize a master card from the newest version when the lane has no real

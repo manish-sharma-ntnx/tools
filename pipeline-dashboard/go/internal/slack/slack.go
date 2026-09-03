@@ -159,7 +159,13 @@ type Outcome struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-func buildMessage(e model.Alert) string {
+func buildMessage(e model.Alert) (string, []any) {
+	buildNo := "—"
+	if e.LastBuildNumber != nil {
+		buildNo = fmt.Sprintf("#%d", *e.LastBuildNumber)
+	}
+	dashURL := config.DashboardURL()
+
 	lines := []string{
 		fmt.Sprintf(":rotating_light: *MSP Pipeline Alert* %s", config.Slack.Mention),
 		fmt.Sprintf("*%s* has *failed the last %d consecutive builds*.", e.Title, e.Window),
@@ -168,13 +174,39 @@ func buildMessage(e model.Alert) string {
 		lines = append(lines, fmt.Sprintf("Version: `%s`", e.Version))
 	}
 	lines = append(lines, fmt.Sprintf("Lane: `%s`", e.Lane))
-	buildNo := "—"
-	if e.LastBuildNumber != nil {
-		buildNo = fmt.Sprintf("#%d", *e.LastBuildNumber)
-	}
 	lines = append(lines, fmt.Sprintf("Latest build: %s — %s", buildNo, e.LastResult))
-	lines = append(lines, fmt.Sprintf("<%s|Open in Jenkins>", e.URL))
-	return strings.Join(lines, "\n")
+	if e.URL != "" {
+		lines = append(lines, fmt.Sprintf("<%s|Open in Jenkins>", e.URL))
+	}
+	if dashURL != "" {
+		lines = append(lines, "Dashboard: "+dashURL)
+	}
+
+	detail := make([]string, 0, 4)
+	if e.Version != "" && e.Version != "master" {
+		detail = append(detail, fmt.Sprintf("Version: `%s`", e.Version))
+	}
+	detail = append(detail, fmt.Sprintf("Lane: `%s`", e.Lane))
+	detail = append(detail, fmt.Sprintf("Latest build: %s — %s", buildNo, e.LastResult))
+	if e.URL != "" {
+		detail = append(detail, fmt.Sprintf("<%s|Jenkins>", e.URL))
+	}
+
+	blocks := []any{
+		map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": "MSP Pipeline Alert", "emoji": true}},
+		map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn",
+			"text": fmt.Sprintf("*%s* has *failed the last %d consecutive builds*.", e.Title, e.Window)}},
+		map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": strings.Join(detail, "\n")}},
+	}
+	if dashURL != "" {
+		blocks = append(blocks, map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn",
+			"text": fmt.Sprintf(":bar_chart: <%s|Open MSP Pipeline Dashboard>", dashURL)}})
+	}
+	blocks = append(blocks, map[string]any{"type": "context", "elements": []any{
+		map[string]any{"type": "mrkdwn", "text": config.Slack.Mention},
+	}})
+
+	return strings.Join(lines, "\n"), blocks
 }
 
 // SendFailureAlert posts an alert honoring the per-pipeline cooldown.
@@ -201,16 +233,16 @@ func SendFailureAlert(e model.Alert) any {
 	saveState(state)
 	stateMu.Unlock()
 
-	text := buildMessage(e)
+	text, blocks := buildMessage(e)
 	var res postResult
 
 	switch {
 	case config.Slack.WebhookURL != "":
-		res = postJSON(config.Slack.WebhookURL, nil, map[string]any{"channel": config.Slack.Channel, "text": text})
+		res = postJSON(config.Slack.WebhookURL, nil, map[string]any{"channel": config.Slack.Channel, "text": text, "blocks": blocks})
 	case config.Slack.BotToken != "":
 		res = postJSON("https://slack.com/api/chat.postMessage",
 			map[string]string{"Authorization": "Bearer " + config.Slack.BotToken},
-			map[string]any{"channel": config.Slack.Channel, "text": text, "link_names": true})
+			map[string]any{"channel": config.Slack.Channel, "text": text, "link_names": true, "blocks": blocks})
 	default:
 		log.Printf("[slack] (not configured) would alert -> %s:\n%s", config.Slack.Channel, text)
 		return Outcome{Sent: false, Skipped: true, Reason: "no-transport"}

@@ -22,6 +22,7 @@ type Controller struct {
 // Controllers keyed by id (matches the Node CONTROLLERS map).
 var Controllers = map[string]Controller{
 	"devtest":     {ID: "devtest", Label: "Devtest", BaseURL: "http://10.37.10.188:8080", Insecure: false},
+	"sbprod1":     {ID: "sbprod1", Label: "SB Prod Controller-1", BaseURL: "https://phx-p10y-sb-prod-jenkins-controller-1.corp.p10y.ntnxdpro.com", Insecure: true},
 	"sbprod":      {ID: "sbprod", Label: "SB Prod Controller-2", BaseURL: "https://phx-p10y-sb-prod-jenkins-controller-2.corp.p10y.ntnxdpro.com", Insecure: true},
 	"harbinger":   {ID: "harbinger", Label: "Harbinger Prod-14", BaseURL: "https://phx-p10y-jenkins-harbinger-prod-14.p10y.eng.nutanix.com", Insecure: true},
 	"harbinger12": {ID: "harbinger12", Label: "Harbinger Prod-12", BaseURL: "https://phx-p10y-jenkins-harbinger-prod-12.p10y.eng.nutanix.com", Insecure: true},
@@ -94,9 +95,27 @@ var DiscoveryRules = []DiscoveryRule{
 		VersionRegex: regexp.MustCompile(`^msp-ganges-(\d+(?:\.\d+)*)-pc$`), JobPrefix: "msp-ganges-", JobSuffix: "-pc",
 	},
 	{
+		// Postcommit / smoke. Master job is on SB Prod Controller-1.
+		ID: "smoke", Controller: "sbprod1", Parent: []string{"Postcommit"},
+		Label: "Smoke", ShortLabel: "Smoke", Lane: "Smoke",
+		MasterGroup: "msp-master", MasterName: "master",
+		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
+	},
+	{
+		// Master LKG stays on Harbinger-14 (Nupipe/LKG/master). Older patch
+		// trains (7.5.x) still live here; newer trains moved to sbprod1.
 		ID: "lkg", Controller: "harbinger", Parent: []string{"Nupipe", "LKG"},
 		Label: "LKG", ShortLabel: "LKG", Lane: "LKG",
 		MasterGroup: "lkg", MasterName: "master",
+		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
+	},
+	{
+		// Current LKG home (7.6.x, 7.7, …). Versioned jobs only — master LKG
+		// is the harbinger-14 rule above. Listed after `lkg` so overlapping
+		// versions prefer this controller.
+		ID: "lkg-c1", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG"},
+		Label: "LKG", ShortLabel: "LKG", Lane: "LKG",
+		MasterGroup: "lkg", MasterName: "",
 		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
 	},
 }
