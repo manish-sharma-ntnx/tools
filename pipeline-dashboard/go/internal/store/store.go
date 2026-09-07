@@ -301,10 +301,16 @@ func Poll(forceDiscovery bool) model.Snapshot {
 
 	versionBlocks := assembleVersionBlocks(d, cardByKey)
 
-	// Alerting: any pipeline whose last N completed builds all failed.
+	// Alerting:
+	//  1) per-pipeline: last N completed builds all failed (allFailing).
+	//  2) patch-threshold alert: non-master pipelines with consecutiveFailures
+	//     >= PATCH_FAIL_THRESHOLD get a Slack alert too (e.g. ganges-7.7 LKG at
+	//     6 streaks when PATCH_FAIL_THRESHOLD=3). Master-block pipelines are
+	//     handled by the daily scheduler/digest, so they are excluded here to
+	//     avoid duplicate pings.
 	alerts := []model.Alert{}
 	for _, card := range allCards {
-		if !card.AllFailing {
+		if !card.AllFailing && card.ConsecutiveFailures < config.Setting.PatchFailThreshold {
 			continue
 		}
 		lastResult := "FAILURE"
@@ -317,8 +323,20 @@ func Poll(forceDiscovery bool) model.Snapshot {
 			LastBuildNumber: card.LastBuildNumber, LastResult: lastResult,
 			At: time.Now().UnixMilli(),
 		}
+		// Fire Slack for the 10-in-a-row rule always; for the patch-threshold
+		// rule only on non-master pipelines (master lanes are served by the
+		// daily digest and GetMasterFailures).
 		if alertSender != nil {
-			entry.Outcome = alertSender(entry)
+			isMaster := false
+			for _, m := range d.Masters {
+				if m.Key == card.Key {
+					isMaster = true
+					break
+				}
+			}
+			if card.AllFailing || (!isMaster && card.ConsecutiveFailures >= config.Setting.PatchFailThreshold) {
+				entry.Outcome = alertSender(entry)
+			}
 		}
 		alerts = append(alerts, entry)
 	}
@@ -373,6 +391,41 @@ func GetMasterFailures(threshold int) []model.Card {
 	failing := []model.Card{}
 	for _, block := range blocks {
 		if !block.IsMaster {
+			continue
+		}
+		for _, card := range block.Pipelines {
+			if card.ConsecutiveFailures >= threshold {
+				failing = append(failing, card)
+			}
+		}
+	}
+	// worst-first
+	for i := 0; i < len(failing); i++ {
+		for j := i + 1; j < len(failing); j++ {
+			if failing[j].ConsecutiveFailures > failing[i].ConsecutiveFailures {
+				failing[i], failing[j] = failing[j], failing[i]
+			}
+		}
+	}
+	return failing
+}
+
+// GetPatchFailures returns non-master (version-block) pipelines with
+// consecutiveFailures >= PATCH_FAIL_THRESHOLD, worst-first. Used to alert on
+// failing patch-release lanes (e.g. ganges-7.7 LKG) separate from the master
+// digest.
+func GetPatchFailures() []model.Card {
+	threshold := config.Setting.PatchFailThreshold
+	if threshold < 1 {
+		threshold = 1
+	}
+	mu.RLock()
+	blocks := snapshot.VersionBlocks
+	mu.RUnlock()
+
+	failing := []model.Card{}
+	for _, block := range blocks {
+		if block.IsMaster {
 			continue
 		}
 		for _, card := range block.Pipelines {

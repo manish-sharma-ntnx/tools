@@ -206,23 +206,30 @@ async function poll({ forceDiscovery = false } = {}) {
   const versionBlocks = assembleVersionBlocks(discovery, cardByKey);
   const allCards = results.map((r) => r.card);
 
-  // Alerting: any pipeline whose last N completed builds all failed.
+  // Alerting:
+  //  1) per-pipeline 10-in-a-row (card.allFailing) → Slack for any pipeline.
+  //  2) patch-threshold: non-master pipelines with consecutiveFailures >=
+  //     PATCH_FAIL_THRESHOLD alert too (e.g. ganges-7.7 LKG at 6 streaks).
+  //     Master-block pipelines are excluded from the patch rule to avoid
+  //     duplicate pings (they already reach the 10-rule above).
   const alerts = [];
+  const masterKeys = new Set(discovery.masters.map((m) => m.key));
   for (const card of allCards) {
-    if (card.allFailing) {
-      const entry = {
-        key: card.key,
-        title: card.title,
-        lane: card.lane,
-        version: card.version,
-        url: card.url,
-        window: SETTINGS.buildsToTrack,
-        lastBuildNumber: card.lastBuildNumber,
-        lastResult: card.builds[0] ? card.builds[0].result : 'FAILURE',
-      };
-      const outcome = await sendFailureAlert(entry);
-      alerts.push({ ...entry, at: Date.now(), outcome });
-    }
+    const meetsRule = card.allFailing ||
+      (!masterKeys.has(card.key) && card.consecutiveFailures >= SETTINGS.patchFailThreshold);
+    if (!meetsRule) continue;
+    const entry = {
+      key: card.key,
+      title: card.title,
+      lane: card.lane,
+      version: card.version,
+      url: card.url,
+      window: SETTINGS.buildsToTrack,
+      lastBuildNumber: card.lastBuildNumber,
+      lastResult: card.builds[0] ? card.builds[0].result : 'FAILURE',
+    };
+    const outcome = await sendFailureAlert(entry);
+    alerts.push({ ...entry, at: Date.now(), outcome });
   }
 
   SNAPSHOT = {
@@ -261,4 +268,22 @@ function getMasterFailures(threshold) {
   return failing;
 }
 
-module.exports = { poll, getSnapshot, getMasterFailures, ensureDiscovery, normalizeStatus };
+/**
+ * Return non-master (version-block) pipelines whose consecutiveFailures >=
+ * PATCH_FAIL_THRESHOLD. Used to alert on failing patch lanes (e.g. ganges-7.7
+ * LKG) separate from the daily master digest. Sorted worst-first.
+ */
+function getPatchFailures() {
+  const t = Number(SETTINGS.patchFailThreshold) || 3;
+  const failing = [];
+  for (const block of SNAPSHOT.versionBlocks || []) {
+    if (block.isMaster) continue;
+    for (const card of block.pipelines || []) {
+      if ((card.consecutiveFailures || 0) >= t) failing.push(card);
+    }
+  }
+  failing.sort((a, b) => (b.consecutiveFailures || 0) - (a.consecutiveFailures || 0));
+  return failing;
+}
+
+module.exports = { poll, getSnapshot, getMasterFailures, getPatchFailures, ensureDiscovery, normalizeStatus };

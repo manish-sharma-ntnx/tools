@@ -54,7 +54,7 @@ func FireDigest(label string) slack.Outcome {
 // all-clear / connectivity message.
 func FireDigestTest() slack.Outcome {
 	failing := store.GetMasterFailures(config.MasterDigest.FailThreshold)
-	meta := slack.DigestMeta{Threshold: config.MasterDigest.FailThreshold, When: "manual-test"}
+	meta := slack.DigestMeta{Threshold: config.MasterDigest.FailThreshold, When: "manual-test", TestMode: true}
 	if len(failing) == 0 {
 		outcome := slack.PostAllClear(meta)
 		if outcome.Sent && outcome.Reason == "" {

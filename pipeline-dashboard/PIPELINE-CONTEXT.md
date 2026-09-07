@@ -2,7 +2,9 @@
 
 A leadership-facing dashboard that tracks MSP Jenkins pipeline health across
 **Devtest**, **Master**, and **Patch Release** pipelines, with automatic version
-discovery and Slack alerting when a pipeline fails its last 10 builds.
+discovery and Slack alerting. Any pipeline that fails its last 10 completed
+builds is alerted; **patch-release** lanes also alert at a lower
+`PATCH_FAIL_THRESHOLD` (default 3).
 
 This document is the single source of truth for *why* the system is built the way
 it is, how the Jenkins data is consumed, and a per-run token ledger.
@@ -20,17 +22,16 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 | Master (msp-master) | Local LCC | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-master` |
 | Master (msp-master) | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-master` |
 | Master (msp-master) | Smoke | SB Prod Controller-1 | `Postcommit/master` |
-| Master (standalone) | LKG | Harbinger Prod-14 | `Nupipe/LKG/master` |
+| Master (standalone) | LKG | SB Prod Controller-1 | `Nupipe/LKG/master` |
 | Patch release | Precommit | Harbinger Prod-12 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
 | Patch release | Local LCC | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-ganges-<ver>` |
 | Patch release | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-ganges-<ver>` |
 | Patch release | Smoke | SB Prod Controller-1 | `Postcommit/ganges-<ver>-stable` |
-| Patch release | LKG (current) | SB Prod Controller-1 | `Nupipe/LKG/ganges-<ver>-stable` |
-| Patch release | LKG (older 7.5.x) | Harbinger Prod-14 | `Nupipe/LKG/ganges-<ver>-stable` |
+| Patch release | LKG | SB Prod Controller-1 | `Nupipe/LKG/ganges-<ver>-stable` |
 
-> **Master section semantics:** Precommit + Local LCC + GLCC are stages of the
-> `msp-master` pipeline and are grouped together; **LKG** is a separate mainline
-> shown standalone.
+> **Master section semantics:** Precommit + Local LCC + GLCC + Smoke are stages
+> of the `msp-master` pipeline and are grouped together; **LKG** is a separate
+> mainline shown standalone.
 >
 > **Precommit master** is the real `msp-master` job on **SB Prod Controller-3**
 > under `Nupipe/Precommit_NOS/msp-master` (discovery rule `precommit-master`).
@@ -43,12 +44,13 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 >
 > The Devtest `msp-controller-precommit` job remains the Devtest card.
 >
-> **LKG controller split (2026-09-01):** master LKG remains Harbinger-14
-> `Nupipe/LKG/master`. Versioned LKG for current trains (7.6.x, **7.7**, …)
-> lives on **SB Prod Controller-1** `Nupipe/LKG/ganges-<ver>-stable`. Fetch
-> latest did not show 7.7 before because discovery only listed Harbinger-14,
-> which has no `ganges-7.7-stable` job. The `-stable-pc` sibling is still
-> excluded (same as other `-pc` LKG jobs).
+> **LKG on Controller-1 (2026-09-07):** both **master LKG** (`Nupipe/LKG/master`)
+> and versioned LKG (`Nupipe/LKG/ganges-<ver>-stable`, including 7.6.x and
+> **7.7**) are discovered on **SB Prod Controller-1**. Rule `lkg` owns the
+> master job; rule `lkg-c1` (listed after it) upserts overlapping version+lane
+> jobs onto the same controller. Harbinger Prod-14 is still in the controller
+> map but **no discovery rule targets it** — older 7.5.x jobs that exist only
+> there will not appear. The `-stable-pc` sibling is still excluded.
 >
 > **Smoke** is `Postcommit` on SB Prod Controller-1 (`master` +
 > `ganges-<ver>-stable`).
@@ -91,7 +93,9 @@ unstable | aborted | unreachable | unknown` (see `normalizeStatus` in
 ### Consecutive-failure math
 `consecutiveFailures` counts failures from the newest completed build backwards,
 skipping any in-flight build at the head. `allFailing` is true when the last 10
-**completed** builds contain zero successes — that is the alert trigger.
+**completed** builds contain zero successes. Slack fires on `allFailing` for
+any pipeline, **or** on `consecutiveFailures >= PATCH_FAIL_THRESHOLD` for
+non-master (patch-release) pipelines.
 
 ---
 
@@ -103,13 +107,18 @@ folder's child jobs and regex the version out of each name.*
 
 Observed naming (live):
 
-- SB Prod (`LCC_NOS`, `LCC_Dial_Tests`): `msp-master`, `msp-ganges-7.6`
-  → regex `^msp-ganges-(\d+(?:\.\d+)*)$`
-- Harbinger-14 (`LKG`): `master`, `ganges-7.6-stable`, `ganges-7.5.1.10-stable`,
-  `ganges-7.6.9.3-stable` → regex `^ganges-(\d+(?:\.\d+)*)-stable$`
+- SB Prod Controller-2 (`LCC_NOS`, `LCC_Dial_Tests`): `msp-master`,
+  `msp-ganges-7.6` → regex `^msp-ganges-(\d+(?:\.\d+)*)$`
+- SB Prod Controller-1 (`LKG`): `master`, `ganges-7.6-stable`,
+  `ganges-7.7-stable` → regex `^ganges-(\d+(?:\.\d+)*)-stable$`
+- SB Prod Controller-1 (`Postcommit` / Smoke): `master`,
+  `ganges-7.6-stable` → same `-stable` regex
 - Harbinger-12 (`Precommit_PC`): `msp-ganges-7.6-pc`, `msp-ganges-7.6.9.3-pc`
   → regex `^msp-ganges-(\d+(?:\.\d+)*)-pc$` (deliberately excludes
   `msp-feat-9.8-test-pc` and `msp-ncm-*-release` in the same folder)
+
+Later discovery rules **upsert** on the same `version + lane`, so `lkg-c1`
+replaces an earlier LKG hit for that train.
 
 Versions therefore range from 2-part (`7.6`) to 4-part (`7.6.9.3`,
 `7.5.1.10`) and are compared numerically segment-by-segment
@@ -122,7 +131,8 @@ regular poll cadence (default 3 min) for status.
 
 ### Clubbing under version blocks
 The UI groups pipelines into **blocks**:
-- One **Master** block clubs the three master lanes (Local LCC, GLCC, LKG).
+- One **Master** block clubs the `msp-master` lanes (Precommit, Local LCC, GLCC,
+  Smoke) plus standalone LKG.
 - One block **per discovered version**, clubbing every lane that has that version.
   Blocks are labeled with the version and its train (major.minor, e.g. `7.6`),
   sorted newest-first. Older patch blocks start collapsed to keep the leadership
@@ -130,30 +140,62 @@ The UI groups pipelines into **blocks**:
 
 ---
 
-## 4. Slack alerting (10-in-a-row failures)
+## 4. Slack alerting
 
-Rule: **if a pipeline's last 10 completed builds are all non-success**, post to
-`#test-msp` tagging `@msp-help` with the pipeline, version, lane, latest build
-number, a Jenkins deep link, and an **Open MSP Pipeline Dashboard** link
-(same Block Kit shape as the master digest).
+Three independent paths, all cooldown-aware (`SLACK_COOLDOWN_MS`, default 6h)
+except the scheduled digest (which fires at most twice a day):
 
-A second, scheduled **master digest** posts at 09:00 IST and 09:00 US-Pacific
-when any master lane (msp-master Precommit / Local LCC / GLCC, plus standalone
-LKG) has ≥ `MASTER_FAIL_THRESHOLD` (default 5) consecutive failures. The scheduled
-run still posts nothing when the board is clean. `POST /api/digest/test` always
-attempts a Slack post: the failure digest if anything qualifies, otherwise an
-all-clear so the channel/token can be verified. The response includes `posted`,
-`count`, `reason`, `channel`, `slackEnabled`, and `hasBotToken`.
+1. **10-in-a-row (`allFailing`)** — any pipeline whose last 10 completed builds
+   are all non-success. Posted to `SLACK_CHANNEL` (default `#test-msp`) tagging
+   `@msp-help`, with version, lane, latest build number, a Jenkins deep link,
+   and an **Open MSP Pipeline Dashboard** link (Block Kit, same shape as the
+   digest).
+2. **Patch-release threshold** — a *lower* bar for **non-master** lanes only
+   (see below). Same Slack message + cooldown as (1).
+3. **Master digest** — scheduled at 09:00 IST and 09:00 US-Pacific when any
+   master lane (msp-master Precommit / Local LCC / GLCC / Smoke, plus standalone
+   LKG) has ≥ `MASTER_FAIL_THRESHOLD` (default 5) consecutive failures. The
+   scheduled run posts nothing when the board is clean.
+
+`POST /api/digest/test` always attempts a Slack post for verification: the
+failure digest if anything qualifies, otherwise an all-clear. In test mode the
+post goes to `#test-msp` and **omits `@msp-help`**. The response includes
+`posted`, `count`, `patchCount`, `patchThreshold`, `reason`, `channel`,
+`slackEnabled`, and `hasBotToken`.
 
 Transport (in priority order, all env-configurable):
-1. `SLACK_WEBHOOK_URL` — incoming webhook (10-fail alerts only).
-2. `SLACK_BOT_TOKEN` / `SLACK_ALERT_BOT_TOKEN` — bot token → `chat.postMessage`
-   (alerts + digest). Required for the digest.
-3. Neither set → the alert is **logged** (never silently dropped).
+ 1. `SLACK_WEBHOOK_URL` — incoming webhook (10-fail alerts only).
+ 2. `SLACK_BOT_TOKEN` / `SLACK_ALERT_BOT_TOKEN` — bot token → `chat.postMessage`
+    (alerts + digest). Required for the digest.
+ 3. Neither set → the alert is **logged** (never silently dropped).
 
 A **cooldown** (`SLACK_COOLDOWN_MS`, default 6h) per-pipeline prevents re-spamming
 the channel every poll while a pipeline stays red. State persists in
 `data/alert-state.json`.
+
+### Patch-release threshold
+
+`PATCH_FAIL_THRESHOLD` (default 3) is a *separate*, lower threshold for
+**non-master (patch-release) pipelines** such as `ganges-7.7` LKG/Smoke. When a
+patch lane's `consecutiveFailures` reaches `PATCH_FAIL_THRESHOLD`, a Slack alert
+is posted (subject to the same cooldown) — independent of the 10-in-a-row
+`AllFailing` rule. Master-block pipelines are excluded from this rule so they are
+not double-pinged by both the per-poll alert and the scheduled digest.
+
+| Variable | Default | Applies to |
+|---|---|---|
+| `MASTER_FAIL_THRESHOLD` | 5 | master-block pipelines, via the scheduled digest |
+| `PATCH_FAIL_THRESHOLD` | 3 | patch-release (version-block) pipelines, via the per-poll alert |
+| `BuildsToTrack` (hardcoded 10) | 10 | any pipeline hitting 10 consecutive completed failures |
+
+### Testing Slack without pinging the live channel
+
+`POST /api/digest/test` always attempts a post for verification: the failure
+digest if anything qualifies, otherwise an all-clear. **In test mode:**
+ - the message posts to `#test-msp` (overriding `SLACK_CHANNEL`/`MASTER_DIGEST_CHANNEL`), and
+ - the `@msp-help` mention is omitted so the live channel is not pinged.
+
+This makes it safe to run repeatedly while troubleshooting.
 
 ### Start / pause the channel (operator)
 
@@ -166,6 +208,8 @@ the channel every poll while a pipeline stays red. State persists in
 | Pause all Slack (keep dashboard) | `SLACK_ENABLED=false` |
 | Pause only the daily digest | `MASTER_DIGEST_ENABLED=false` |
 | Stop the whole service | `systemctl stop msp-pipeline-dashboard` |
+| Make patch lanes (e.g. 7.7 LKG) alert at <10 failures | `PATCH_FAIL_THRESHOLD=3` (default 3) |
+| Verify the channel post without pinging live | `POST /api/digest/test` (auto-posts to `#test-msp`, no `@msp-help`) |
 
 While `SLACK_ENABLED=false`, events are logged
 (`[slack] (SLACK_ENABLED=false)…`) and **cooldown is not consumed**, so the
@@ -310,8 +354,11 @@ pipeline-dashboard/
 
 ### API
 - `GET /api/pipelines` — full snapshot (stats, static cards, version blocks).
+- `GET /api/alerts` — per-pipeline alert history + frequency.
 - `POST /api/refresh` — force re-discovery + poll ("Fetch latest releases").
 - `GET /api/health` — liveness.
+- `GET /api/digest/preview` — master pipelines currently ≥ `MASTER_FAIL_THRESHOLD` (no post).
+- `POST /api/digest/test` — verification post to `#test-msp` (no `@msp-help`).
 
 ---
 
@@ -326,7 +373,10 @@ pipeline-dashboard/
    releases, so exact-version blocks are correct, and the `train` tag + collapse
    keeps the board readable for execs.
 4. **Alert on completed builds only.** An in-progress build at the head shouldn't
-   mask or trip the 10-fail rule; we skip `running` when evaluating the streak.
+   mask or trip the 10-fail or patch-threshold rules; we skip `running` when
+   evaluating the streak. Patch lanes use a lower threshold so a failing train
+   (e.g. 7.7 LKG) surfaces before it burns a full 10-build window. Master lanes
+   stay on the 10-fail rule + scheduled digest so they are not double-pinged.
 5. **Graceful degradation everywhere.** Unreachable controller → `unreachable`
    card (not a crash). No Slack transport → logged alert. Stale snapshot → header
    flips to "Stale".
@@ -376,6 +426,8 @@ establishes the ledger. Update this table at the end of each future run.
 | 11 | 2026-09-01 | Slack `/api/digest/test` now always posts (failure digest or all-clear) and returns `reason`/`channel`/`hasBotToken`. Code Tracker UI: dropped branch-page Cherry-Pick View + Analytics buttons and V4/Post-LKG sub-tabs; CFDs / Analytics / Cherry-Picks stay empty. | ~45,000 | ~584,000 |
 | 12 | 2026-09-01 | Master KPI links to master LKG (not newest patch). Added Smoke column (Controller-1 `Postcommit`). Renamed AWAITING LCC → Precommit pipeline. Master LKG as a full column. Discover Controller-1 LKG so 7.7 appears. | ~40,000 | ~624,000 |
 | 13 | 2026-09-03 | 10-fail Slack alert now includes the dashboard link + Block Kit (same shape as the 09:00 digest). | ~12,000 | ~636,000 |
+| 14 | 2026-09-07 | Master LKG (`Nupipe/LKG/master`) moved from Harbinger-14 to SB Prod Controller-1. Harbinger-14 is no longer a discovery source. | ~8,000 | ~644,000 |
+| 15 | 2026-09-09 | `PATCH_FAIL_THRESHOLD` (default 3) for non-master lanes; `/api/digest/test` isolated to `#test-msp` without `@msp-help`; context + README synced (LKG move, Smoke, dual-threshold alerting). | ~22,000 | ~666,000 |
 
 Notes on the Run 1 estimate: this counts the full agent session — reading skills
 and workspace, ~30 live Jenkins/Slack probe commands, authoring ~10 files

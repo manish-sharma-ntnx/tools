@@ -1,21 +1,29 @@
 # MSP Pipeline Dashboard
 
-Leadership-facing health board for MSP Jenkins pipelines: **Devtest**, **Precommit
-PC**, **Master** (Local LCC / GLCC / LKG) and **Patch Releases**, with automatic
-version discovery and Slack alerting when a pipeline fails its last 10 builds.
+Leadership-facing health board for MSP Jenkins pipelines: **Devtest**, **Master**
+(Precommit / Local LCC / GLCC / Smoke) plus standalone **LKG**, and **Patch
+Releases**, with automatic version discovery. Slack alerts when a pipeline fails
+its last 10 builds, or when a **patch** lane hits `PATCH_FAIL_THRESHOLD`
+(default 3).
 
 ![preview](docs/preview.png)
 
-> **What's new (2026-08-31)**
-> - **Slack start / pause** — `SLACK_ENABLED=true|false` in
->   `/etc/msp-pipeline-dashboard.env`. Pause stops every channel post (10-fail
->   alerts + daily digest) without removing tokens; the dashboard keeps polling.
-> - **SB Prod Controller-3** (`Nupipe/Precommit_NOS/msp-master`) verified live:
->   anonymous HTTP 200.
+> **What's new (2026-09-09)**
+> - **Patch-release Slack threshold** — `PATCH_FAIL_THRESHOLD` (default 3) alerts
+>   on non-master lanes (e.g. `ganges-7.7` LKG) without waiting for 10 failures.
+>   Master lanes stay on the 10-fail rule + the 09:00 digest so they are not
+>   double-pinged.
+> - **Safe digest test** — `POST /api/digest/test` always posts to `#test-msp`
+>   and omits `@msp-help`. Response includes `patchCount` / `patchThreshold`.
+> - **Master LKG** now on **SB Prod Controller-1** (`Nupipe/LKG/master`), same
+>   controller as current versioned LKG (7.6.x, 7.7, …). Harbinger-14 is no
+>   longer a discovery source.
+> - **Smoke** lane from Controller-1 `Postcommit` (`master` +
+>   `ganges-<ver>-stable`).
 >
-> **Earlier (2026-08-26)** — three-tab UI (Pipeline Status / Analytics / Alerts),
-> Go port + systemd installer. Go is the recommended deploy path (Section A).
-> Node instructions stay below as reference.
+> **Earlier (2026-08-31)** — Slack start/pause (`SLACK_ENABLED`). **(2026-08-26)**
+> — three-tab UI, Go port + systemd installer. Go is the recommended deploy path
+> (Section A). Node instructions stay below as reference.
 
 ## A. Install on another Linux host (recommended)
 
@@ -59,6 +67,7 @@ SLACK_ENABLED=true
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_CHANNEL=#test-msp
 DASHBOARD_URL=http://<this-host-fqdn-or-ip>:4317
+PATCH_FAIL_THRESHOLD=3
 ```
 
 Leave `SLACK_BOT_TOKEN` / `SLACK_WEBHOOK_URL` unset to run the dashboard in
@@ -102,11 +111,12 @@ See `go/README.md` for the full package layout and cross-compile targets.
 
 ## B. Start and pause Slack on the channel
 
-Two kinds of Slack messages go to `#test-msp` (or `SLACK_CHANNEL`):
+Three kinds of Slack messages go to `#test-msp` (or `SLACK_CHANNEL`):
 
 | Message | When it fires | How to pause just this one |
 |---|---|---|
 | **10-fail alert** | A pipeline’s last 10 completed builds are all non-success | `SLACK_ENABLED=false` (or unset the webhook/bot token) |
+| **Patch-threshold alert** | A **non-master** lane has ≥ `PATCH_FAIL_THRESHOLD` (default 3) consecutive failures | `SLACK_ENABLED=false`, or raise / unset `PATCH_FAIL_THRESHOLD` |
 | **Master digest** | 09:00 IST and 09:00 US-Pacific, only if a master lane has ≥ 5 consecutive failures | `MASTER_DIGEST_ENABLED=false` |
 
 The dashboard itself does **not** stop when Slack is paused. Jenkins polling,
@@ -159,13 +169,19 @@ sudo sed -i 's/^SLACK_ENABLED=.*/SLACK_ENABLED=true/' /etc/msp-pipeline-dashboar
 sudo systemctl restart msp-pipeline-dashboard
 ```
 
-Pause only the morning digest (10-fail alerts still post):
+Pause only the morning digest (10-fail and patch-threshold alerts still post):
 
 ```ini
 MASTER_DIGEST_ENABLED=false
 ```
 
 then `sudo systemctl restart msp-pipeline-dashboard`.
+
+Raise or lower the patch-lane bar without touching master:
+
+```ini
+PATCH_FAIL_THRESHOLD=3
+```
 
 ### Pause everything including the dashboard
 
@@ -256,6 +272,9 @@ SLACK_CHANNEL=#test-msp
 # Master digest: post master pipelines failing >= N builds, at these local times.
 MASTER_FAIL_THRESHOLD=5
 MASTER_DIGEST_TIMES=09:00 Asia/Kolkata,09:00 America/Los_Angeles
+
+# Patch-release lanes (e.g. ganges-7.7 LKG) alert at this lower streak.
+PATCH_FAIL_THRESHOLD=3
 ```
 
 ```bash
@@ -340,7 +359,8 @@ the dashboard.
 | `SLACK_MENTION` | `@msp-help` | Group to tag |
 | `SLACK_COOLDOWN_MS` | `21600000` | Per-pipeline re-alert suppression (6h) |
 | `MASTER_DIGEST_ENABLED` | `true` | Toggle the scheduled master digest only |
-| `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures that make a master pipeline report-worthy |
+| `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures that make a **master** pipeline report-worthy |
+| `PATCH_FAIL_THRESHOLD` | `3` | Consecutive failures that make a **patch (non-master)** pipeline alert |
 | `MASTER_DIGEST_CHANNEL` | `SLACK_CHANNEL` | Channel for the digest |
 | `MASTER_DIGEST_TIMES` | `09:00 Asia/Kolkata,09:00 America/Los_Angeles` | Daily post times (`HH:MM TZ`, DST-aware) |
 
@@ -353,7 +373,8 @@ SLACK_BOT_TOKEN="xoxb-..." node server/index.js
 ## Slack master-pipeline digest
 
 The app can post the health of the **master** pipelines (the `msp-master` group —
-Precommit + Local LCC + GLCC — plus standalone **LKG**) to Slack on a schedule.
+Precommit + Local LCC + GLCC + Smoke — plus standalone **LKG**) to Slack on a
+schedule.
 
 **Rule:** at each configured time, any master pipeline with **≥ `MASTER_FAIL_THRESHOLD`
 (default 5) consecutive build failures** is posted to `MASTER_DIGEST_CHANNEL`
@@ -377,16 +398,39 @@ it. At your Slack app (**OAuth & Permissions**):
 `SLACK_APP_TOKEN` (`xapp-…`) is **not** required for posting — it is only for
 Socket Mode (inbound slash-commands/buttons), which can be added later.
 
+### Test the Slack channel without pinging live traffic
+
+`POST /api/digest/test` is safe to call repeatedly for verification:
+
+- it posts to `#test-msp` regardless of `SLACK_CHANNEL`/`MASTER_DIGEST_CHANNEL`,
+- the `@msp-help` mention is **omitted** (failure digest and all-clear) so the
+  live channel is not pinged,
+- it reports `{ posted, count, patchCount, patchThreshold, reason, channel, slackEnabled, hasBotToken }`.
+
+```bash
+curl -X POST http://<host>:4317/api/digest/test | jq
+
+# Expect: "posted": true, "channel": "#test-msp", "slackEnabled": true, "hasBotToken": true
+```
+
+> The handler always routes test traffic to `#test-msp` and never tags the group
+> mention, so it is safe for routine channel verification.
+
 ### Posting workflow
 
 ```
 poll loop (every 3 min) ──► in-memory snapshot (per-pipeline consecutiveFailures)
-                                     │
+           │
+           ├─ any pipeline, last 10 completed all failed  ──► Slack 10-fail alert
+           └─ patch lane, consecutiveFailures ≥ PATCH_FAIL_THRESHOLD
+                                                         ──► Slack patch alert
+                                                             (same cooldown)
+
         daily timer (09:00 IST / 09:00 PT, DST-aware)
                                      ▼
-        select master pipelines with consecutiveFailures ≥ threshold
+        select master pipelines with consecutiveFailures ≥ MASTER_FAIL_THRESHOLD
                                      ▼
-        chat.postMessage  (Bearer $SLACK_BOT_TOKEN)  ──►  #test-msp
+        chat.postMessage  (Bearer $SLACK_BOT_TOKEN)  ──►  digest channel
 ```
 
 ### Test / preview endpoints
@@ -396,6 +440,7 @@ poll loop (every 3 min) ──► in-memory snapshot (per-pipeline consecutiveFa
 curl -s http://<host>:4317/api/digest/preview
 
 # Force a digest post right now (uses the real bot token).
+# Always goes to #test-msp and omits @msp-help.
 # Posts the failing-master digest, or an all-clear if nothing meets the threshold:
 curl -s -X POST http://<host>:4317/api/digest/test
 ```
@@ -406,12 +451,14 @@ curl -s -X POST http://<host>:4317/api/digest/test
   automatically. Click **Fetch latest releases** to force an immediate re-scan.
 - **Last-10 build sparkline** per pipeline with hover details, success rate, and a
   consecutive-failure warning.
-- **Master section** grouped as `msp-master` (Precommit + Local LCC + GLCC) with a
-  standalone LKG master.
+- **Master section** grouped as `msp-master` (Precommit + Local LCC + GLCC +
+  Smoke) with a standalone LKG master on SB Prod Controller-1.
 - **Patch-release comparison** — pick any two versions from dropdowns and compare
   their lanes side by side.
-- **Slack alert** to `#test-msp` tagging `@msp-help` when all last 10 builds fail.
-- **Nutanix-themed** dark UI with live/stale indicator and controller reachability.
+- **Slack alert** to `#test-msp` tagging `@msp-help` when the last 10 builds
+  fail, or when a patch lane hits `PATCH_FAIL_THRESHOLD` (default 3).
+- **Scheduled master digest** at 09:00 IST and 09:00 US-Pacific.
+- **Nutanix-themed** UI with live/stale indicator and controller reachability.
 
 See `PIPELINE-CONTEXT.md` for architecture, Jenkins API details, and design
 decisions.
@@ -423,4 +470,4 @@ decisions.
 - `POST /api/refresh` — force re-discovery + poll
 - `GET /api/health` — liveness
 - `GET /api/digest/preview` — master pipelines currently ≥ failure threshold (no post)
-- `POST /api/digest/test` — force a master-digest Slack post now
+- `POST /api/digest/test` — verification post to `#test-msp` (no `@msp-help`)

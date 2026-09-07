@@ -7,11 +7,10 @@
  * standard Jenkins JSON API (`/api/json`) which is what we consume.
  *
  * Versioning discovered from the live controllers:
- *   - SB prod (LCC_NOS / LCC_Dial_Tests): jobs are named `msp-master` and
- *     `msp-ganges-<version>` (e.g. msp-ganges-7.6). The GLCC folder also has a
- *     `-pc` sibling for the PC pipeline.
- *   - Harbinger (LKG): jobs are named `master` and `ganges-<version>-stable`
- *     with an optional `-pc` sibling (e.g. ganges-7.6-stable, ganges-7.6-stable-pc).
+ *   - SB prod: jobs are named `msp-master` and `msp-ganges-<version>` (e.g.
+ *     msp-ganges-7.6). The GLCC folder also has a `-pc` sibling for the
+ *     PC pipeline. LKG master and versioned ganges jobs also live here.
+ *   - Harbinger-12 (precommit PC): jobs named `msp-ganges-<version>-pc`.
  *
  * "version" here is the ganges train, e.g. 7.6, 7.6.0.1, 7.5.1.10.
  */
@@ -151,10 +150,9 @@ const DISCOVERY_RULES = [
     jobSuffix: '-stable',
   },
   {
-    // Master LKG stays on Harbinger-14 (Nupipe/LKG/master). Older patch
-    // trains (7.5.x) still live here; newer trains moved to sbprod1.
+    // Master LKG on SB Prod Controller-1 (Nupipe/LKG/master).
     id: 'lkg',
-    controller: 'harbinger',
+    controller: 'sbprod1',
     parent: ['Nupipe', 'LKG'],
     label: 'LKG',
     shortLabel: 'LKG',
@@ -168,7 +166,7 @@ const DISCOVERY_RULES = [
   },
   {
     // Current LKG home (7.6.x, 7.7, …). Versioned jobs only — master LKG is
-    // the harbinger-14 rule above. Listed after `lkg` so overlapping versions
+    // the lkg rule above (sbprod1). Listed after `lkg` so overlapping versions
     // prefer this controller.
     id: 'lkg-c1',
     controller: 'sbprod1',
@@ -217,6 +215,9 @@ const MASTER_DIGEST = {
   enabled: (process.env.MASTER_DIGEST_ENABLED || 'true') !== 'false',
   // Consecutive-failure threshold that makes a master pipeline "report-worthy".
   failThreshold: Number(process.env.MASTER_FAIL_THRESHOLD || 5),
+  // Patch-release pipelines (non-master, e.g. ganges-7.7 LKG) alert when their
+  // consecutive-failure streak >= PATCH_FAIL_THRESHOLD. Default 3.
+  patchFailThreshold: Number(process.env.PATCH_FAIL_THRESHOLD || 3),
   // Channel for the digest (falls back to the general SLACK.channel).
   channel: process.env.MASTER_DIGEST_CHANNEL || process.env.SLACK_CHANNEL || '#test-msp',
   // Local send times as { hour, minute, tz }. Default 09:00 IST and 09:00 PT.

@@ -134,13 +134,16 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/digest/test' && req.method === 'POST') {
       await store.poll(); // ensure a fresh snapshot
       const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
+      const patchFailing = store.getPatchFailures();
       const outcome = await fireDigestTest();
       return sendJson(res, 200, {
         ok: true,
         posted: !!outcome.sent,
         count: failing.length,
+        patchCount: patchFailing.length,
+        patchThreshold: SETTINGS.patchFailThreshold,
         reason: outcome.reason || '',
-        channel: MASTER_DIGEST.channel,
+        channel: '#test-msp',
         slackEnabled: SLACK.enabled,
         hasBotToken: !!SLACK.botToken,
       });

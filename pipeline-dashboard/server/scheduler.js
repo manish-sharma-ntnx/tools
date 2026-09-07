@@ -82,23 +82,37 @@ async function fireDigest(label) {
   return outcome;
 }
 
-/** Always attempt a Slack post (failure digest or all-clear) for /api/digest/test. */
+/** Always attempt a Slack post (failure digest or all-clear) for /api/digest/test.
+ *  In test mode the post goes to #test-msp and omits the @msp-help mention so it
+ *  does not ping the live channel.
+ */
 async function fireDigestTest() {
   const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
   if (!failing.length) {
     const outcome = await postAllClear({
       threshold: MASTER_DIGEST.failThreshold,
       when: 'manual-test',
+      test: true,
     });
     if (outcome.sent && !outcome.reason) outcome.reason = 'all-clear';
     console.log(
       `[digest] (manual-test) all-clear -> post ${
         outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
-      } to ${MASTER_DIGEST.channel}`
+      } to #test-msp`
     );
     return outcome;
   }
-  return fireDigest('manual-test');
+  const outcome = await postMasterDigest(failing, {
+    threshold: MASTER_DIGEST.failThreshold,
+    when: 'manual-test',
+    test: true,
+  });
+  console.log(
+    `[digest] (manual-test) ${failing.length} failing master pipeline(s) -> post ${
+      outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
+    } to #test-msp`
+  );
+  return outcome;
 }
 
 /** Arm one repeating daily timer for a single { hour, minute, tz } slot. */

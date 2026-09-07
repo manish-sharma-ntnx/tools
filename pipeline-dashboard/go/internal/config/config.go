@@ -1,5 +1,7 @@
 // Package config holds the controllers, discovery rules, and runtime settings.
 // Ported from server/config.js. Jenkins controllers are read-only (anonymous).
+// Controllers: devtest, sbprod, sbprod1, sbprod3 (SB prod), harbinger (harbinger prod-14,
+// legacy LKG), harbinger12 (prod-12, precommit PC). LKG master now uses sbprod1.
 package config
 
 import (
@@ -102,16 +104,15 @@ var DiscoveryRules = []DiscoveryRule{
 		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
 	},
 	{
-		// Master LKG stays on Harbinger-14 (Nupipe/LKG/master). Older patch
-		// trains (7.5.x) still live here; newer trains moved to sbprod1.
-		ID: "lkg", Controller: "harbinger", Parent: []string{"Nupipe", "LKG"},
+		// Master LKG on SB Prod Controller-1 (Nupipe/LKG/master).
+		ID: "lkg", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG"},
 		Label: "LKG", ShortLabel: "LKG", Lane: "LKG",
 		MasterGroup: "lkg", MasterName: "master",
 		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
 	},
 	{
 		// Current LKG home (7.6.x, 7.7, …). Versioned jobs only — master LKG
-		// is the harbinger-14 rule above. Listed after `lkg` so overlapping
+		// is the lkg rule above (sbprod1). Listed after `lkg` so overlapping
 		// versions prefer this controller.
 		ID: "lkg-c1", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG"},
 		Label: "LKG", ShortLabel: "LKG", Lane: "LKG",
@@ -151,8 +152,9 @@ type Settings struct {
 	Port          int
 	Host          string
 	PollInterval  time.Duration
-	BuildsToTrack int
-	HTTPTimeout   time.Duration
+	BuildsToTrack      int
+	PatchFailThreshold int  // PATCH_FAIL_THRESHOLD: patch/lane pipelines alert when >= N consecutive failures
+	HTTPTimeout        time.Duration
 	Concurrency   int
 	DataDir       string
 	DashboardURL  string
@@ -177,7 +179,7 @@ func init() {
 
 	MasterDigest = MasterDigestConfig{
 		Enabled:       os.Getenv("MASTER_DIGEST_ENABLED") != "false",
-		FailThreshold: int(envInt64("MASTER_FAIL_THRESHOLD", 5)),
+	FailThreshold: int(envInt64("MASTER_FAIL_THRESHOLD", 5)),
 		Channel:       firstNonEmpty(os.Getenv("MASTER_DIGEST_CHANNEL"), os.Getenv("SLACK_CHANNEL"), "#test-msp"),
 		Times:         parseDigestTimes(env("MASTER_DIGEST_TIMES", "09:00 Asia/Kolkata,09:00 America/Los_Angeles")),
 	}
@@ -188,6 +190,7 @@ func init() {
 		Host:          env("HOST", "0.0.0.0"),
 		PollInterval:  time.Duration(envInt64("POLL_INTERVAL_MS", 3*60*1000)) * time.Millisecond,
 		BuildsToTrack: 10,
+		PatchFailThreshold: int(envInt64("PATCH_FAIL_THRESHOLD", 3)),
 		HTTPTimeout:   time.Duration(envInt64("HTTP_TIMEOUT_MS", 20000)) * time.Millisecond,
 		Concurrency:   int(envInt64("FETCH_CONCURRENCY", 8)),
 		DataDir:       env("DATA_DIR", wd+"/data"),

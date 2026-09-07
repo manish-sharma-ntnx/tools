@@ -277,36 +277,42 @@ function buildMasterDigest(failing, meta = {}) {
     dashLink
       ? { type: 'section', text: { type: 'mrkdwn', text: `:bar_chart: ${dashLink}` } }
       : null,
-    {
-      type: 'context',
-      elements: [
-        {
-          type: 'mrkdwn',
-          text: `Digest @ ${meta.when || new Date().toISOString()} • ${SLACK.mention}`,
-        },
-      ],
-    },
-  ].filter(Boolean);
-  return { text, blocks };
+     {
+       type: 'context',
+       elements: [
+         {
+           type: 'mrkdwn',
+           text: `Digest @ ${meta.when || new Date().toISOString()} • ${meta.test ? '' : SLACK.mention}`,
+         },
+       ],
+     },
+   ].filter(Boolean);
+   return { text, blocks };
 }
 
 /**
  * Post the master-failure digest for the given failing pipelines.
  * `failing` = array of pipeline cards (already filtered to master + >=threshold).
- * If empty, nothing is posted. Returns { sent, skipped, reason }.
+ * If empty, nothing is posted. In test mode, posts to #test-msp and omits the
+ * @msp-help mention. Returns { sent, skipped, reason }.
  */
 async function postMasterDigest(failing, meta = {}) {
   if (!failing || failing.length === 0) {
     return { sent: false, skipped: true, reason: 'nothing-failing' };
   }
   const { text, blocks } = buildMasterDigest(failing, meta);
-  return postMessage(MASTER_DIGEST.channel, text, blocks);
+  const channel = meta.test ? '#test-msp' : MASTER_DIGEST.channel;
+  return postMessage(channel, text, blocks);
 }
 
 function buildAllClear(meta = {}) {
   const threshold = meta.threshold || MASTER_DIGEST.failThreshold;
   const dashUrl = meta.dashboardUrl || dashboardUrl();
   const when = meta.when || new Date().toISOString();
+  // In test mode, suppress the @msp-help mention so the verification post does
+  // not ping the live channel.
+  const mention = meta.test ? '' : SLACK.mention;
+  const headerMention = mention ? ` • ${mention}` : '';
   const text = `:white_check_mark: MSP Master Pipeline Digest — all clear\nNo master pipeline is failing ≥ ${threshold} consecutive builds.${
     dashUrl ? `\nDashboard: ${dashUrl}` : ''
   }`;
@@ -324,7 +330,7 @@ function buildAllClear(meta = {}) {
       : null,
     {
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `Test post @ ${when} • ${SLACK.mention}` }],
+      elements: [{ type: 'mrkdwn', text: `Test post @ ${when}${headerMention}` }],
     },
   ].filter(Boolean);
   return { text, blocks };
@@ -332,7 +338,8 @@ function buildAllClear(meta = {}) {
 
 async function postAllClear(meta = {}) {
   const { text, blocks } = buildAllClear(meta);
-  return postMessage(MASTER_DIGEST.channel, text, blocks);
+  const channel = meta.test ? '#test-msp' : MASTER_DIGEST.channel;
+  return postMessage(channel, text, blocks);
 }
 
 module.exports = {

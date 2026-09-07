@@ -110,15 +110,18 @@ func handleDigestTest(w http.ResponseWriter, r *http.Request) {
 	}
 	store.Poll(false)
 	failing := store.GetMasterFailures(config.MasterDigest.FailThreshold)
+	patchFailing := store.GetPatchFailures()
 	outcome := scheduler.FireDigestTest()
 	sendJSON(w, http.StatusOK, map[string]any{
-		"ok":           true,
-		"posted":       outcome.Sent,
-		"count":        len(failing),
-		"reason":       outcome.Reason,
-		"channel":      config.MasterDigest.Channel,
-		"slackEnabled": config.Slack.Enabled,
-		"hasBotToken":  config.Slack.BotToken != "",
+		"ok":             true,
+		"posted":         outcome.Sent,
+		"count":          len(failing),
+		"patchCount":     len(patchFailing),
+		"reason":         outcome.Reason,
+		"channel":        "#test-msp",
+		"slackEnabled":   config.Slack.Enabled,
+		"hasBotToken":    config.Slack.BotToken != "",
+		"patchThreshold": config.Setting.PatchFailThreshold,
 	})
 }
 
