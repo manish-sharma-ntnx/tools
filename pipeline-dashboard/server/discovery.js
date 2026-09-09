@@ -68,7 +68,7 @@ async function discoverPipelines() {
     }
 
     // Version-scoped jobs. Later rules win on the same version+lane so
-    // controller-1 LKG replaces harbinger-14 for overlapping trains.
+    // Controller-4 Precommit/LCC and Controller-1 LKG replace older homes.
     for (const job of res.jobs) {
       const m = rule.versionRegex.exec(job.name);
       if (!m) continue;

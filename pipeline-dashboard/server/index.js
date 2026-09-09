@@ -2,12 +2,11 @@
 
 const http = require('http');
 const path = require('path');
-const { SETTINGS, MASTER_DIGEST } = require('./config');
+const { SETTINGS, MASTER_DIGEST, SUCCESS_DIGEST, SLACK } = require('./config');
 const store = require('./store');
 const { getAsset, isEmbedded } = require('./assets');
 const { startMasterDigest, fireDigestTest } = require('./scheduler');
 const { getAlertHistory } = require('./slack');
-const { SLACK } = require('./config');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -36,7 +35,10 @@ function serveStatic(req, res) {
     return res.end('Not found');
   }
   const ext = path.extname(urlPath === '/' ? '/index.html' : urlPath);
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Cache-Control': 'no-cache',
+  });
   res.end(data);
 }
 
@@ -143,9 +145,11 @@ const server = http.createServer(async (req, res) => {
         patchCount: patchFailing.length,
         patchThreshold: SETTINGS.patchFailThreshold,
         reason: outcome.reason || '',
-        channel: '#test-msp',
+        channel: MASTER_DIGEST.channel,
         slackEnabled: SLACK.enabled,
         hasBotToken: !!SLACK.botToken,
+        successEnabled: SUCCESS_DIGEST.enabled,
+        successThreshold: SUCCESS_DIGEST.threshold,
       });
     }
 

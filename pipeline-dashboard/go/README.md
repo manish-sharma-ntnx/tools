@@ -77,7 +77,11 @@ Identical to the Node version. Key ones:
 | `SLACK_WEBHOOK_URL` | — | Incoming webhook for failure alerts |
 | `SLACK_CHANNEL` | `#test-msp` | Alert/digest channel |
 | `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures to report a master pipeline |
-| `MASTER_DIGEST_TIMES` | `09:00 Asia/Kolkata,09:00 America/Los_Angeles` | Daily post times |
+| `PATCH_FAIL_THRESHOLD` | `3` | Consecutive failures to alert a patch lane |
+| `SUCCESS_DIGEST_ENABLED` | `false` | Optional green digest for succeeding master lanes |
+| `SUCCESS_THRESHOLD` | `5` | Consecutive successes for the success digest |
+| `MASTER_DIGEST_TIMES` | `09:00` | Daily clock times (`HH:MM`, 24-hour) |
+| `MASTER_DIGEST_TZ` | `IST,PST` | Timezones for those clock times |
 | `DASHBOARD_URL` | auto | Public URL for the Slack "Open dashboard" link |
 
 ## API
@@ -87,7 +91,7 @@ Identical to the Node version. Key ones:
 - `POST /api/refresh` — force re-discovery + poll
 - `GET  /api/health` — liveness
 - `GET  /api/digest/preview` — master pipelines currently ≥ threshold (no post)
-- `POST /api/digest/test` — force a master-digest Slack post now
+- `POST /api/digest/test` — force a digest Slack post to the `.env` channel
 
 ## Parity
 

@@ -11,9 +11,9 @@
  * fire. Ideal for the zero-dependency deployment model of this app.
  */
 
-const { MASTER_DIGEST, SLACK } = require('./config');
+const { MASTER_DIGEST, SUCCESS_DIGEST, SLACK } = require('./config');
 const store = require('./store');
-const { postMasterDigest, postAllClear, verifyAuth } = require('./slack');
+const { postMasterDigest, postAllClear, postSuccessDigest, verifyAuth } = require('./slack');
 
 /** Get the parts of "now" in a given IANA timezone as numbers. */
 function nowInZone(tz) {
@@ -62,57 +62,72 @@ function msUntilNext(hour, minute, tz) {
   return targetReal - now.getTime();
 }
 
-async function fireDigest(label) {
-  const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
-  if (!failing.length) {
+async function fireSuccessDigest(label) {
+  if (!SUCCESS_DIGEST.enabled) return;
+  const ok = store.getMasterSuccesses(SUCCESS_DIGEST.threshold);
+  if (!ok.length) {
     console.log(
-      `[digest] (${label}) no master pipeline at >= ${MASTER_DIGEST.failThreshold} consecutive failures; nothing to post.`
+      `[digest] (${label}) no master pipeline at >= ${SUCCESS_DIGEST.threshold} consecutive successes; success digest skipped.`
     );
     return;
   }
-  const outcome = await postMasterDigest(failing, {
-    threshold: MASTER_DIGEST.failThreshold,
+  const outcome = await postSuccessDigest(ok, {
+    threshold: SUCCESS_DIGEST.threshold,
     when: label,
   });
   console.log(
-    `[digest] (${label}) ${failing.length} failing master pipeline(s) -> post ${
+    `[digest] (${label}) ${ok.length} succeeding master pipeline(s) -> post ${
       outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
     } to ${MASTER_DIGEST.channel}`
   );
   return outcome;
 }
 
-/** Always attempt a Slack post (failure digest or all-clear) for /api/digest/test.
- *  In test mode the post goes to #test-msp and omits the @msp-help mention so it
- *  does not ping the live channel.
- */
+async function fireDigest(label) {
+  let outcome;
+  if (MASTER_DIGEST.enabled) {
+    const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
+    if (!failing.length) {
+      console.log(
+        `[digest] (${label}) no master pipeline at >= ${MASTER_DIGEST.failThreshold} consecutive failures; nothing to post.`
+      );
+      outcome = { sent: false, skipped: true, reason: 'nothing-failing' };
+    } else {
+      outcome = await postMasterDigest(failing, {
+        threshold: MASTER_DIGEST.failThreshold,
+        when: label,
+      });
+      console.log(
+        `[digest] (${label}) ${failing.length} failing master pipeline(s) -> post ${
+          outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
+        } to ${MASTER_DIGEST.channel}`
+      );
+    }
+  } else {
+    outcome = { sent: false, skipped: true, reason: 'failure-digest-disabled' };
+  }
+  await fireSuccessDigest(label);
+  return outcome;
+}
+
+/** Always attempt a Slack post for /api/digest/test using the .env channel. */
 async function fireDigestTest() {
   const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
   if (!failing.length) {
     const outcome = await postAllClear({
       threshold: MASTER_DIGEST.failThreshold,
       when: 'manual-test',
-      test: true,
     });
     if (outcome.sent && !outcome.reason) outcome.reason = 'all-clear';
     console.log(
       `[digest] (manual-test) all-clear -> post ${
         outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
-      } to #test-msp`
+      } to ${MASTER_DIGEST.channel}`
     );
+    await fireSuccessDigest('manual-test');
     return outcome;
   }
-  const outcome = await postMasterDigest(failing, {
-    threshold: MASTER_DIGEST.failThreshold,
-    when: 'manual-test',
-    test: true,
-  });
-  console.log(
-    `[digest] (manual-test) ${failing.length} failing master pipeline(s) -> post ${
-      outcome.sent ? 'SENT' : `NOT sent (${outcome.reason})`
-    } to #test-msp`
-  );
-  return outcome;
+  return fireDigest('manual-test');
 }
 
 /** Arm one repeating daily timer for a single { hour, minute, tz } slot. */
@@ -137,9 +152,12 @@ function armSlot(slot) {
 
 /** Start the master-digest scheduler. Safe no-op when disabled. */
 function startMasterDigest() {
-  if (!MASTER_DIGEST.enabled) {
-    console.log('[digest] master digest disabled (MASTER_DIGEST_ENABLED=false).');
+  if (!MASTER_DIGEST.enabled && !SUCCESS_DIGEST.enabled) {
+    console.log('[digest] master + success digests disabled.');
     return;
+  }
+  if (!MASTER_DIGEST.enabled) {
+    console.log('[digest] failure digest disabled (MASTER_DIGEST_ENABLED=false); success digest still scheduled.');
   }
   if (!SLACK.enabled) {
     console.warn('[digest] Slack posting paused (SLACK_ENABLED=false). Digest will run but never post.');

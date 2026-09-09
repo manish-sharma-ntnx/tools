@@ -152,6 +152,18 @@ func toPipelineCard(meta discovery.Meta, res jenkins.JobResult) model.Card {
 		}
 	}
 
+	consecOK := 0
+	for _, b := range builds {
+		if b.Status == "running" {
+			continue
+		}
+		if b.Status == "success" {
+			consecOK++
+		} else {
+			break
+		}
+	}
+
 	var health *model.Health
 	if len(data.HealthReport) > 0 {
 		health = &model.Health{Score: data.HealthReport[0].Score, Description: data.HealthReport[0].Description}
@@ -184,6 +196,7 @@ func toPipelineCard(meta discovery.Meta, res jenkins.JobResult) model.Card {
 	base.SuccessRate = successRate
 	base.CompletedCount = completed
 	base.ConsecutiveFailures = consec
+	base.ConsecutiveSuccesses = consecOK
 	base.AllFailing = allFailing
 	return base
 }
@@ -443,4 +456,35 @@ func GetPatchFailures() []model.Card {
 		}
 	}
 	return failing
+}
+
+// GetMasterSuccesses returns master-block cards with consecutiveSuccesses >=
+// threshold, best-first. Used by the optional success digest.
+func GetMasterSuccesses(threshold int) []model.Card {
+	if threshold < 1 {
+		threshold = 1
+	}
+	mu.RLock()
+	blocks := snapshot.VersionBlocks
+	mu.RUnlock()
+
+	ok := []model.Card{}
+	for _, block := range blocks {
+		if !block.IsMaster {
+			continue
+		}
+		for _, card := range block.Pipelines {
+			if card.ConsecutiveSuccesses >= threshold {
+				ok = append(ok, card)
+			}
+		}
+	}
+	for i := 0; i < len(ok); i++ {
+		for j := i + 1; j < len(ok); j++ {
+			if ok[j].ConsecutiveSuccesses > ok[i].ConsecutiveSuccesses {
+				ok[i], ok[j] = ok[j], ok[i]
+			}
+		}
+	}
+	return ok
 }

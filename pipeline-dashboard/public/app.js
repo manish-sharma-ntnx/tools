@@ -82,8 +82,11 @@ function rateClass(rate) {
 }
 
 async function fetchSnapshot() {
-  const res = await fetch('/api/pipelines');
-  return res.json();
+  const res = await fetch('/api/pipelines', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' from /api/pipelines');
+  const data = await res.json();
+  if (!data || typeof data !== 'object') throw new Error('invalid snapshot JSON');
+  return data;
 }
 
 async function triggerRefresh() {
@@ -142,7 +145,8 @@ function buildComponents(data) {
 }
 
 function cardForLane(row, lane) {
-  return row.lanes.find((p) => p.lane === lane) || null;
+  const lanes = row && Array.isArray(row.lanes) ? row.lanes : [];
+  return lanes.find((p) => p && p.lane === lane) || null;
 }
 
 /* ---------- KPI strip ---------- */
@@ -152,7 +156,7 @@ function renderKpis(data) {
   const s = data.stats || {};
 
   const masterBlock = (data.versionBlocks || []).find((b) => b.isMaster);
-  const masterLanes = masterBlock ? masterBlock.pipelines : [];
+  const masterLanes = masterBlock && Array.isArray(masterBlock.pipelines) ? masterBlock.pipelines : [];
   // First widget is *master* LKG, not the newest successful LKG of any train.
   const masterLkg = masterLanes.find((p) => p.lane === 'LKG') || null;
   const smokeRows = ['Precommit', 'LCC', 'GLCC', 'Smoke']
@@ -283,11 +287,10 @@ function componentRow(row, idx) {
   const crMeta = row.isMaster
     ? `<span class="cr">master</span>`
     : `<span class="cr">${row.version || ''}</span>`;
-  const anyFail = row.lanes.some((p) => p.allFailing);
+  const laneCards = Array.isArray(row.lanes) ? row.lanes : [];
+  const anyFail = laneCards.some((p) => p && p.allFailing);
 
   const stageCells = STAGES.map((stage) => laneCell(cardForLane(row, stage.lane))).join('');
-
-  const laneCards = row.lanes;
   const detail = laneCards
     .map((c) => {
       const rc = rateClass(c.successRate);
@@ -406,7 +409,7 @@ function renderMeta(data) {
     controllers.add(p.controller);
     if (p.status === 'unreachable') down.add(p.controller);
   }
-  const labels = { devtest: 'Devtest', sbprod1: 'SB Prod-1', sbprod: 'SB Prod-2', sbprod3: 'SB Prod-3', harbinger: 'Harbinger-14', harbinger12: 'Harbinger-12' };
+  const labels = { devtest: 'Devtest', sbprod1: 'SB Prod-1', sbprod: 'SB Prod-2', sbprod3: 'SB Prod-3', sbprod4: 'SB Prod-4', harbinger: 'Harbinger-14', harbinger12: 'Harbinger-12' };
   $('#foot-controllers').innerHTML = [...controllers]
     .map((c) => `<span class="ctrl-chip ${down.has(c) ? 'down' : ''}"><span class="cdot"></span>${labels[c] || c}</span>`)
     .join('');
@@ -453,6 +456,16 @@ function initTabs() {
 
 /* ---------- main render ---------- */
 
+function showLoadError(err) {
+  const msg = err && err.message ? err.message : String(err || 'unknown error');
+  const rows = $('#rows');
+  if (rows) {
+    rows.innerHTML = `<div class="tab-empty">Could not load pipelines: ${msg}<br/><span class="todo-hint">Hard-refresh the page (Ctrl+Shift+R) if this persists.</span></div>`;
+  }
+  const kpi = $('#kpi-strip');
+  if (kpi) kpi.innerHTML = `<div class="loading-inline">Could not load KPIs: ${msg}</div>`;
+}
+
 function render(data) {
   lastData = data;
   const loading = $('#loading');
@@ -468,21 +481,31 @@ async function tick() {
     const data = await fetchSnapshot();
     render(data);
   } catch (e) {
-    console.error('fetch failed', e);
+    console.error('fetch/render failed', e);
+    showLoadError(e);
   }
 }
 
 function init() {
-  $('#btn-refresh').addEventListener('click', triggerRefresh);
-  $('#expand-all').addEventListener('click', toggleExpandAll);
-  $('#search').addEventListener('input', (e) => {
-    searchTerm = e.target.value.trim().toLowerCase();
-    if (lastData) renderTimeline(lastData);
-  });
+  const refresh = $('#btn-refresh');
+  const expand = $('#expand-all');
+  const search = $('#search');
+  if (refresh) refresh.addEventListener('click', triggerRefresh);
+  if (expand) expand.addEventListener('click', toggleExpandAll);
+  if (search) {
+    search.addEventListener('input', (e) => {
+      searchTerm = e.target.value.trim().toLowerCase();
+      if (lastData) renderTimeline(lastData);
+    });
+  }
   initTabs();
   showView('branches');
   tick();
   setInterval(tick, REFRESH_MS);
 }
 
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

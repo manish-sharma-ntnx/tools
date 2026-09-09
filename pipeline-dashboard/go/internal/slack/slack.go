@@ -264,47 +264,6 @@ type AuthResult struct {
 	Error string
 }
 
-// TestOptions controls behavior of the manual /api/digest/test posting path:
-// it forces the test message onto a dedicated channel and suppresses the
-// @msp-help mention so the verification post does not ping the live channel.
-type TestOptions struct {
-	Channel     string
-	OmitMention bool
-}
-
-// postTo publishes text+blocks to a channel (resolved from args or config),
-// honoring the SLACK_ENABLED master switch. Returns an Outcome suitable for
-// the API response.
-func postTo(opts *TestOptions, text string, blocks []any) Outcome {
-	if !config.Slack.Enabled {
-		log.Printf("[slack] (SLACK_ENABLED=false) would post -> %s:\n%s", channelFor(opts), text)
-		return Outcome{Sent: false, Skipped: true, Reason: "disabled"}
-	}
-	if config.Slack.BotToken == "" {
-		log.Printf("[slack] (no SLACK_BOT_TOKEN) would post -> %s:\n%s", channelFor(opts), text)
-		return Outcome{Sent: false, Skipped: true, Reason: "no-bot-token"}
-	}
-	payload := map[string]any{"channel": channelFor(opts), "text": text, "link_names": true}
-	if blocks != nil {
-		payload["blocks"] = blocks
-	}
-	res := postJSON("https://slack.com/api/chat.postMessage",
-		map[string]string{"Authorization": "Bearer " + config.Slack.BotToken}, payload)
-	if !slackOK(res) {
-		reason := slackFailReason(res)
-		log.Printf("[slack] postTo failed %s body=%s", reason, res.body)
-		return Outcome{Sent: false, Reason: reason}
-	}
-	return Outcome{Sent: true}
-}
-
-func channelFor(opts *TestOptions) string {
-	if opts != nil && opts.Channel != "" {
-		return opts.Channel
-	}
-	return config.Slack.Channel
-}
-
 func verifyAuth() AuthResult {
 	if config.Slack.BotToken == "" {
 		return AuthResult{OK: false, Error: "no-bot-token"}
@@ -383,7 +342,6 @@ type DigestMeta struct {
 	Threshold    int
 	When         string
 	DashboardURL string
-	TestMode     bool   // true for /api/digest/test → post to #test-msp, omit @msp-help
 }
 
 func buildMasterDigest(failing []model.Card, meta DigestMeta) (string, []any) {
@@ -441,27 +399,13 @@ func buildMasterDigest(failing []model.Card, meta DigestMeta) (string, []any) {
 			"text": fmt.Sprintf(":bar_chart: <%s|Open MSP Pipeline Dashboard>", dashURL)}})
 	}
 	blocks = append(blocks, map[string]any{"type": "context", "elements": []any{
-		map[string]any{"type": "mrkdwn", "text": fmt.Sprintf("Digest @ %s %s", when, mentionFor(meta))},
+		map[string]any{"type": "mrkdwn", "text": fmt.Sprintf("Digest @ %s %s", when, config.Slack.Mention)},
 	}})
 
 	return text, blocks
 }
 
-// mentionFor returns the @msp-help mention string, or empty in test mode so
-// /api/digest/test does not ping the live channel.
-func mentionFor(meta DigestMeta) string {
-	if meta.TestMode {
-		return ""
-	}
-	return config.Slack.Mention
-}
-
-// channelForDigest routes test messages to #test-msp; normal digests use the
-// configured master-digest channel.
-func channelForDigest(meta DigestMeta) string {
-	if meta.TestMode {
-		return "#test-msp"
-	}
+func digestChannel() string {
 	return config.MasterDigest.Channel
 }
 
@@ -471,7 +415,7 @@ func PostMasterDigest(failing []model.Card, meta DigestMeta) Outcome {
 		return Outcome{Sent: false, Skipped: true, Reason: "nothing-failing"}
 	}
 	text, blocks := buildMasterDigest(failing, meta)
-	return postMessage(channelForDigest(meta), text, blocks)
+	return postMessage(digestChannel(), text, blocks)
 }
 
 func buildAllClear(meta DigestMeta) (string, []any) {
@@ -487,12 +431,7 @@ func buildAllClear(meta DigestMeta) (string, []any) {
 	if when == "" {
 		when = time.Now().UTC().Format(time.RFC3339)
 	}
-	// Mention: empty for the /api/digest/test verification post so it does not
-	// ping @msp-help on the live channel.
 	mention := config.Slack.Mention
-	if meta.TestMode {
-		mention = ""
-	}
 	text := fmt.Sprintf(":white_check_mark: MSP Master Pipeline Digest — all clear\nNo master pipeline is failing ≥ %d consecutive builds.", threshold)
 	if dashURL != "" {
 		text += "\nDashboard: " + dashURL
@@ -520,5 +459,67 @@ func buildAllClear(meta DigestMeta) (string, []any) {
 // when nothing currently meets the failure threshold).
 func PostAllClear(meta DigestMeta) Outcome {
 	text, blocks := buildAllClear(meta)
-	return postMessage(channelForDigest(meta), text, blocks)
+	return postMessage(digestChannel(), text, blocks)
+}
+
+func buildSuccessDigest(ok []model.Card, meta DigestMeta) (string, []any) {
+	threshold := meta.Threshold
+	if threshold == 0 {
+		threshold = config.SuccessDigest.Threshold
+	}
+	header := fmt.Sprintf(":white_check_mark: MSP Master Pipeline Success — %d pipeline(s) succeeding ≥ %d builds", len(ok), threshold)
+
+	lines := make([]string, 0, len(ok))
+	for _, c := range ok {
+		lane := ""
+		if laneStr := model.Deref(c.Lane); laneStr != "" {
+			lane = fmt.Sprintf(" _(%s)_", laneStr)
+		}
+		buildNo := "n/a"
+		if c.LastBuildNumber != nil {
+			buildNo = fmt.Sprintf("#%d", *c.LastBuildNumber)
+		}
+		link := ""
+		if c.URL != "" {
+			link = fmt.Sprintf("<%s|Jenkins>", c.URL)
+		}
+		lines = append(lines, strings.TrimSpace(fmt.Sprintf(":large_green_circle: *%s*%s — %d consecutive successes, latest %s %s",
+			c.Title, lane, c.ConsecutiveSuccesses, buildNo, link)))
+	}
+
+	dashURL := meta.DashboardURL
+	if dashURL == "" {
+		dashURL = config.DashboardURL()
+	}
+	text := header + "\n" + strings.Join(lines, "\n")
+	if dashURL != "" {
+		text += "\nDashboard: " + dashURL
+	}
+	when := meta.When
+	if when == "" {
+		when = time.Now().UTC().Format(time.RFC3339)
+	}
+	blocks := []any{
+		map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": "MSP Master Pipeline Success", "emoji": true}},
+		map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn",
+			"text": fmt.Sprintf("%d master pipeline(s) have succeeded *≥ %d consecutive builds*.", len(ok), threshold)}},
+		map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": strings.Join(lines, "\n")}},
+	}
+	if dashURL != "" {
+		blocks = append(blocks, map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn",
+			"text": fmt.Sprintf(":bar_chart: <%s|Open MSP Pipeline Dashboard>", dashURL)}})
+	}
+	blocks = append(blocks, map[string]any{"type": "context", "elements": []any{
+		map[string]any{"type": "mrkdwn", "text": fmt.Sprintf("Success digest @ %s %s", when, config.Slack.Mention)},
+	}})
+	return text, blocks
+}
+
+// PostSuccessDigest posts the optional success digest. Empty input posts nothing.
+func PostSuccessDigest(ok []model.Card, meta DigestMeta) Outcome {
+	if len(ok) == 0 {
+		return Outcome{Sent: false, Skipped: true, Reason: "nothing-succeeding"}
+	}
+	text, blocks := buildSuccessDigest(ok, meta)
+	return postMessage(digestChannel(), text, blocks)
 }

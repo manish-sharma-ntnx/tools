@@ -9,12 +9,19 @@ its last 10 builds, or when a **patch** lane hits `PATCH_FAIL_THRESHOLD`
 ![preview](docs/preview.png)
 
 > **What's new (2026-09-09)**
+> - **Patch Precommit / Local LCC** for current trains (7.6.1, 7.7, …) now
+>   resolve on **SB Prod Controller-4**. Older trains stay on Harbinger-12
+>   (Precommit) and Controller-2 (Local LCC).
 > - **Patch-release Slack threshold** — `PATCH_FAIL_THRESHOLD` (default 3) alerts
 >   on non-master lanes (e.g. `ganges-7.7` LKG) without waiting for 10 failures.
 >   Master lanes stay on the 10-fail rule + the 09:00 digest so they are not
->   double-pinged.
-> - **Safe digest test** — `POST /api/digest/test` always posts to `#test-msp`
->   and omits `@msp-help`. Response includes `patchCount` / `patchThreshold`.
+>   double-pinged. Both thresholds are in the packaging `.env` file.
+> - **Digest test** uses `SLACK_CHANNEL` / `MASTER_DIGEST_CHANNEL` from the
+>   `.env` (no hardcoded test channel).
+> - **Success digest** — `SUCCESS_DIGEST_ENABLED=false` (off) +
+>   `SUCCESS_THRESHOLD=5`. Turn on when you want green status posts.
+> - **Digest schedule** — `MASTER_DIGEST_TIMES=09:00` (24-hour) and
+>   `MASTER_DIGEST_TZ=IST,PST` (timezones are separate).
 > - **Master LKG** now on **SB Prod Controller-1** (`Nupipe/LKG/master`), same
 >   controller as current versioned LKG (7.6.x, 7.7, …). Harbinger-14 is no
 >   longer a discovery source.
@@ -271,10 +278,11 @@ SLACK_CHANNEL=#test-msp
 
 # Master digest: post master pipelines failing >= N builds, at these local times.
 MASTER_FAIL_THRESHOLD=5
-MASTER_DIGEST_TIMES=09:00 Asia/Kolkata,09:00 America/Los_Angeles
-
-# Patch-release lanes (e.g. ganges-7.7 LKG) alert at this lower streak.
+MASTER_DIGEST_TIMES=09:00
+MASTER_DIGEST_TZ=IST,PST
 PATCH_FAIL_THRESHOLD=3
+SUCCESS_DIGEST_ENABLED=false
+SUCCESS_THRESHOLD=5
 ```
 
 ```bash
@@ -361,8 +369,11 @@ the dashboard.
 | `MASTER_DIGEST_ENABLED` | `true` | Toggle the scheduled master digest only |
 | `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures that make a **master** pipeline report-worthy |
 | `PATCH_FAIL_THRESHOLD` | `3` | Consecutive failures that make a **patch (non-master)** pipeline alert |
-| `MASTER_DIGEST_CHANNEL` | `SLACK_CHANNEL` | Channel for the digest |
-| `MASTER_DIGEST_TIMES` | `09:00 Asia/Kolkata,09:00 America/Los_Angeles` | Daily post times (`HH:MM TZ`, DST-aware) |
+| `SUCCESS_DIGEST_ENABLED` | `false` | When `true`, also post master lanes that are succeeding |
+| `SUCCESS_THRESHOLD` | `5` | Consecutive successes that make a master lane report-worthy |
+| `MASTER_DIGEST_CHANNEL` | `SLACK_CHANNEL` | Channel for the digest and `/api/digest/test` |
+| `MASTER_DIGEST_TIMES` | `09:00` | Daily clock times in 24-hour `HH:MM` (`09:00`, `21:00`, or `09:00,21:00`) |
+| `MASTER_DIGEST_TZ` | `IST,PST` | Timezones for those clock times (`IST`=India, `PST`=US-Pacific, or IANA names) |
 
 Example with Slack enabled:
 
@@ -381,8 +392,9 @@ schedule.
 (default `#test-msp`), one entry each with lane, last build number, and a Jenkins
 deep link. If nothing is failing, nothing is posted.
 
-**Schedule:** `MASTER_DIGEST_TIMES` — default **09:00 IST** and **09:00 US-Pacific**
-each day (timezone/DST-aware, no cron needed).
+**Schedule:** `MASTER_DIGEST_TIMES` is a 24-hour clock (`09:00` = 9am, `21:00` =
+9pm). `MASTER_DIGEST_TZ` lists the zones that receive that clock time (default
+`IST,PST` → 09:00 India and 09:00 US-Pacific, DST-aware). No cron needed.
 
 ### Slack app setup (one-time)
 
@@ -398,23 +410,17 @@ it. At your Slack app (**OAuth & Permissions**):
 `SLACK_APP_TOKEN` (`xapp-…`) is **not** required for posting — it is only for
 Socket Mode (inbound slash-commands/buttons), which can be added later.
 
-### Test the Slack channel without pinging live traffic
+### Test the Slack post
 
-`POST /api/digest/test` is safe to call repeatedly for verification:
-
-- it posts to `#test-msp` regardless of `SLACK_CHANNEL`/`MASTER_DIGEST_CHANNEL`,
-- the `@msp-help` mention is **omitted** (failure digest and all-clear) so the
-  live channel is not pinged,
-- it reports `{ posted, count, patchCount, patchThreshold, reason, channel, slackEnabled, hasBotToken }`.
+`POST /api/digest/test` posts to the channel from the `.env` file
+(`MASTER_DIGEST_CHANNEL`, else `SLACK_CHANNEL`) and uses `SLACK_MENTION` as
+configured. It reports `{ posted, count, patchCount, patchThreshold, reason, channel, slackEnabled, hasBotToken }`.
 
 ```bash
 curl -X POST http://<host>:4317/api/digest/test | jq
 
-# Expect: "posted": true, "channel": "#test-msp", "slackEnabled": true, "hasBotToken": true
+# Expect: "posted": true, "channel": "<your SLACK_CHANNEL>", "slackEnabled": true, "hasBotToken": true
 ```
-
-> The handler always routes test traffic to `#test-msp` and never tags the group
-> mention, so it is safe for routine channel verification.
 
 ### Posting workflow
 
@@ -440,7 +446,7 @@ poll loop (every 3 min) ──► in-memory snapshot (per-pipeline consecutiveFa
 curl -s http://<host>:4317/api/digest/preview
 
 # Force a digest post right now (uses the real bot token).
-# Always goes to #test-msp and omits @msp-help.
+# Posts to SLACK_CHANNEL / MASTER_DIGEST_CHANNEL from the .env.
 # Posts the failing-master digest, or an all-clear if nothing meets the threshold:
 curl -s -X POST http://<host>:4317/api/digest/test
 ```
@@ -470,4 +476,4 @@ decisions.
 - `POST /api/refresh` — force re-discovery + poll
 - `GET /api/health` — liveness
 - `GET /api/digest/preview` — master pipelines currently ≥ failure threshold (no post)
-- `POST /api/digest/test` — verification post to `#test-msp` (no `@msp-help`)
+- `POST /api/digest/test` — force a digest Slack post to the `.env` channel

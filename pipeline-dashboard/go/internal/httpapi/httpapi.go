@@ -113,15 +113,17 @@ func handleDigestTest(w http.ResponseWriter, r *http.Request) {
 	patchFailing := store.GetPatchFailures()
 	outcome := scheduler.FireDigestTest()
 	sendJSON(w, http.StatusOK, map[string]any{
-		"ok":             true,
-		"posted":         outcome.Sent,
-		"count":          len(failing),
-		"patchCount":     len(patchFailing),
-		"reason":         outcome.Reason,
-		"channel":        "#test-msp",
-		"slackEnabled":   config.Slack.Enabled,
-		"hasBotToken":    config.Slack.BotToken != "",
-		"patchThreshold": config.Setting.PatchFailThreshold,
+		"ok":               true,
+		"posted":           outcome.Sent,
+		"count":            len(failing),
+		"patchCount":       len(patchFailing),
+		"reason":           outcome.Reason,
+		"channel":          config.MasterDigest.Channel,
+		"slackEnabled":     config.Slack.Enabled,
+		"hasBotToken":      config.Slack.BotToken != "",
+		"patchThreshold":   config.Setting.PatchFailThreshold,
+		"successEnabled":   config.SuccessDigest.Enabled,
+		"successThreshold": config.SuccessDigest.Threshold,
 	})
 }
 
@@ -215,6 +217,7 @@ func serveStatic(webFS fs.FS, w http.ResponseWriter, r *http.Request) {
 		ct = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(b)
 }
 

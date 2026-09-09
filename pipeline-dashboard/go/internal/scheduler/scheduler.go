@@ -30,31 +30,58 @@ func nextOccurrence(hour, minute int, tz string) time.Time {
 
 // FireDigest evaluates the threshold and posts if anything qualifies.
 func FireDigest(label string) slack.Outcome {
-	failing := store.GetMasterFailures(config.MasterDigest.FailThreshold)
-	if len(failing) == 0 {
-		log.Printf("[digest] (%s) no master pipeline at >= %d consecutive failures; nothing to post.",
-			label, config.MasterDigest.FailThreshold)
-		return slack.Outcome{Sent: false, Skipped: true, Reason: "nothing-failing"}
+	outcome := slack.Outcome{Sent: false, Skipped: true, Reason: "failure-digest-disabled"}
+	if config.MasterDigest.Enabled {
+		failing := store.GetMasterFailures(config.MasterDigest.FailThreshold)
+		if len(failing) == 0 {
+			log.Printf("[digest] (%s) no master pipeline at >= %d consecutive failures; nothing to post.",
+				label, config.MasterDigest.FailThreshold)
+			outcome = slack.Outcome{Sent: false, Skipped: true, Reason: "nothing-failing"}
+		} else {
+			outcome = slack.PostMasterDigest(failing, slack.DigestMeta{
+				Threshold: config.MasterDigest.FailThreshold,
+				When:      label,
+			})
+			status := "SENT"
+			if !outcome.Sent {
+				status = fmt.Sprintf("NOT sent (%s)", outcome.Reason)
+			}
+			log.Printf("[digest] (%s) %d failing master pipeline(s) -> post %s to %s",
+				label, len(failing), status, config.MasterDigest.Channel)
+		}
 	}
-	outcome := slack.PostMasterDigest(failing, slack.DigestMeta{
-		Threshold: config.MasterDigest.FailThreshold,
+	fireSuccessDigest(label)
+	return outcome
+}
+
+func fireSuccessDigest(label string) {
+	if !config.SuccessDigest.Enabled {
+		return
+	}
+	ok := store.GetMasterSuccesses(config.SuccessDigest.Threshold)
+	if len(ok) == 0 {
+		log.Printf("[digest] (%s) no master pipeline at >= %d consecutive successes; success digest skipped.",
+			label, config.SuccessDigest.Threshold)
+		return
+	}
+	outcome := slack.PostSuccessDigest(ok, slack.DigestMeta{
+		Threshold: config.SuccessDigest.Threshold,
 		When:      label,
 	})
 	status := "SENT"
 	if !outcome.Sent {
 		status = fmt.Sprintf("NOT sent (%s)", outcome.Reason)
 	}
-	log.Printf("[digest] (%s) %d failing master pipeline(s) -> post %s to %s",
-		label, len(failing), status, config.MasterDigest.Channel)
-	return outcome
+	log.Printf("[digest] (%s) %d succeeding master pipeline(s) -> post %s to %s",
+		label, len(ok), status, config.MasterDigest.Channel)
 }
 
 // FireDigestTest always attempts a Slack post so operators can verify the
-// channel: the normal failure digest if anything qualifies, otherwise an
-// all-clear / connectivity message.
+// configured channel (SLACK_CHANNEL / MASTER_DIGEST_CHANNEL): the failure
+// digest if anything qualifies, otherwise an all-clear. Mentions follow .env.
 func FireDigestTest() slack.Outcome {
 	failing := store.GetMasterFailures(config.MasterDigest.FailThreshold)
-	meta := slack.DigestMeta{Threshold: config.MasterDigest.FailThreshold, When: "manual-test", TestMode: true}
+	meta := slack.DigestMeta{Threshold: config.MasterDigest.FailThreshold, When: "manual-test"}
 	if len(failing) == 0 {
 		outcome := slack.PostAllClear(meta)
 		if outcome.Sent && outcome.Reason == "" {
@@ -65,6 +92,7 @@ func FireDigestTest() slack.Outcome {
 			status = fmt.Sprintf("NOT sent (%s)", outcome.Reason)
 		}
 		log.Printf("[digest] (manual-test) all-clear -> post %s to %s", status, config.MasterDigest.Channel)
+		fireSuccessDigest("manual-test")
 		return outcome
 	}
 	return FireDigest("manual-test")
@@ -95,9 +123,12 @@ func armSlot(slot config.DigestTime) {
 
 // Start launches the master-digest scheduler. Safe no-op when disabled.
 func Start() {
-	if !config.MasterDigest.Enabled {
-		log.Printf("[digest] master digest disabled (MASTER_DIGEST_ENABLED=false).")
+	if !config.MasterDigest.Enabled && !config.SuccessDigest.Enabled {
+		log.Printf("[digest] master + success digests disabled.")
 		return
+	}
+	if !config.MasterDigest.Enabled {
+		log.Printf("[digest] failure digest disabled (MASTER_DIGEST_ENABLED=false); success digest still scheduled.")
 	}
 	if !config.Slack.Enabled {
 		log.Printf("[digest] Slack posting paused (SLACK_ENABLED=false). Digest will run but never post.")

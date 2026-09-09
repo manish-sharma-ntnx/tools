@@ -37,6 +37,12 @@ Minimum for Slack posting:
   SLACK_BOT_TOKEN=xoxb-...        # app needs chat:write; invite bot to channel
   SLACK_CHANNEL=#test-msp
   DASHBOARD_URL=http://<this-host-fqdn-or-ip>:4317
+  MASTER_FAIL_THRESHOLD=5         # master digest bar (default 5)
+  PATCH_FAIL_THRESHOLD=3          # patch-lane per-poll alert bar (default 3)
+  SUCCESS_DIGEST_ENABLED=false    # green success digest (off by default)
+  SUCCESS_THRESHOLD=5             # consecutive successes for that digest
+  MASTER_DIGEST_TIMES=09:00       # 24-hour clock (21:00 = 9pm)
+  MASTER_DIGEST_TZ=IST,PST        # IST=India, PST=US-Pacific
 
 Start / pause Slack (dashboard stays up):
   # Pause every Slack post (10-fail alerts + daily digest):

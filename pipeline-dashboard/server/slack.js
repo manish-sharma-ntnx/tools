@@ -3,7 +3,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { SLACK, MASTER_DIGEST, SETTINGS, dashboardUrl } = require('./config');
+const { SLACK, MASTER_DIGEST, SUCCESS_DIGEST, SETTINGS, dashboardUrl } = require('./config');
 
 const STATE_FILE = path.join(SETTINGS.dataDir, 'alert-state.json');
 
@@ -282,7 +282,7 @@ function buildMasterDigest(failing, meta = {}) {
        elements: [
          {
            type: 'mrkdwn',
-           text: `Digest @ ${meta.when || new Date().toISOString()} • ${meta.test ? '' : SLACK.mention}`,
+           text: `Digest @ ${meta.when || new Date().toISOString()} • ${SLACK.mention}`,
          },
        ],
      },
@@ -293,25 +293,22 @@ function buildMasterDigest(failing, meta = {}) {
 /**
  * Post the master-failure digest for the given failing pipelines.
  * `failing` = array of pipeline cards (already filtered to master + >=threshold).
- * If empty, nothing is posted. In test mode, posts to #test-msp and omits the
- * @msp-help mention. Returns { sent, skipped, reason }.
+ * If empty, nothing is posted. Channel comes from MASTER_DIGEST_CHANNEL /
+ * SLACK_CHANNEL in the env file. Returns { sent, skipped, reason }.
  */
 async function postMasterDigest(failing, meta = {}) {
   if (!failing || failing.length === 0) {
     return { sent: false, skipped: true, reason: 'nothing-failing' };
   }
   const { text, blocks } = buildMasterDigest(failing, meta);
-  const channel = meta.test ? '#test-msp' : MASTER_DIGEST.channel;
-  return postMessage(channel, text, blocks);
+  return postMessage(MASTER_DIGEST.channel, text, blocks);
 }
 
 function buildAllClear(meta = {}) {
   const threshold = meta.threshold || MASTER_DIGEST.failThreshold;
   const dashUrl = meta.dashboardUrl || dashboardUrl();
   const when = meta.when || new Date().toISOString();
-  // In test mode, suppress the @msp-help mention so the verification post does
-  // not ping the live channel.
-  const mention = meta.test ? '' : SLACK.mention;
+  const mention = SLACK.mention;
   const headerMention = mention ? ` • ${mention}` : '';
   const text = `:white_check_mark: MSP Master Pipeline Digest — all clear\nNo master pipeline is failing ≥ ${threshold} consecutive builds.${
     dashUrl ? `\nDashboard: ${dashUrl}` : ''
@@ -338,8 +335,48 @@ function buildAllClear(meta = {}) {
 
 async function postAllClear(meta = {}) {
   const { text, blocks } = buildAllClear(meta);
-  const channel = meta.test ? '#test-msp' : MASTER_DIGEST.channel;
-  return postMessage(channel, text, blocks);
+  return postMessage(MASTER_DIGEST.channel, text, blocks);
+}
+
+function buildSuccessDigest(ok, meta = {}) {
+  const threshold = meta.threshold || SUCCESS_DIGEST.threshold;
+  const dashUrl = meta.dashboardUrl || dashboardUrl();
+  const dashLink = dashUrl ? `<${dashUrl}|Open MSP Pipeline Dashboard>` : '';
+  const header = `:white_check_mark: MSP Master Pipeline Success — ${ok.length} pipeline(s) succeeding ≥ ${threshold} builds`;
+  const lines = ok.map((c) => {
+    const lane = c.lane ? ` _(${c.lane})_` : '';
+    const buildNo = c.lastBuildNumber != null ? `#${c.lastBuildNumber}` : 'n/a';
+    const link = c.url ? `<${c.url}|Jenkins>` : '';
+    return `:large_green_circle: *${c.title}*${lane} — ${c.consecutiveSuccesses} consecutive successes, latest ${buildNo} ${link}`.trim();
+  });
+  const text = `${header}\n${lines.join('\n')}${dashUrl ? `\nDashboard: ${dashUrl}` : ''}`;
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: 'MSP Master Pipeline Success', emoji: true } },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `${ok.length} master pipeline(s) have succeeded *≥ ${threshold} consecutive builds*.`,
+      },
+    },
+    { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } },
+    dashLink ? { type: 'section', text: { type: 'mrkdwn', text: `:bar_chart: ${dashLink}` } } : null,
+    {
+      type: 'context',
+      elements: [
+        { type: 'mrkdwn', text: `Success digest @ ${meta.when || new Date().toISOString()} • ${SLACK.mention}` },
+      ],
+    },
+  ].filter(Boolean);
+  return { text, blocks };
+}
+
+async function postSuccessDigest(ok, meta = {}) {
+  if (!ok || ok.length === 0) {
+    return { sent: false, skipped: true, reason: 'nothing-succeeding' };
+  }
+  const { text, blocks } = buildSuccessDigest(ok, meta);
+  return postMessage(MASTER_DIGEST.channel, text, blocks);
 }
 
 module.exports = {
@@ -351,4 +388,5 @@ module.exports = {
   buildMasterDigest,
   postMasterDigest,
   postAllClear,
+  postSuccessDigest,
 };

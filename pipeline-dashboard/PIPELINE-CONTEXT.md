@@ -23,8 +23,10 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 | Master (msp-master) | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-master` |
 | Master (msp-master) | Smoke | SB Prod Controller-1 | `Postcommit/master` |
 | Master (standalone) | LKG | SB Prod Controller-1 | `Nupipe/LKG/master` |
-| Patch release | Precommit | Harbinger Prod-12 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
-| Patch release | Local LCC | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-ganges-<ver>` |
+| Patch release | Precommit (current) | SB Prod Controller-4 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
+| Patch release | Precommit (older) | Harbinger Prod-12 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
+| Patch release | Local LCC (current) | SB Prod Controller-4 | `Nupipe/LCC_NOS/msp-ganges-<ver>` |
+| Patch release | Local LCC (older) | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-ganges-<ver>` |
 | Patch release | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-ganges-<ver>` |
 | Patch release | Smoke | SB Prod Controller-1 | `Postcommit/ganges-<ver>-stable` |
 | Patch release | LKG | SB Prod Controller-1 | `Nupipe/LKG/ganges-<ver>-stable` |
@@ -38,9 +40,18 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 > Earlier iterations synthesized this card from the newest `Precommit_PC` version
 > on Harbinger-12; that was corrected to point at the true master job.
 >
-> **Precommit patch versions** still come from **Harbinger Prod-12**
-> `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` (rule `precommit-pc`) and feed the
-> patch-release comparison only (they no longer contribute a master card).
+> **Precommit patch versions** come from **SB Prod Controller-4**
+> `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` for current trains (7.6.1, 7.7, …;
+> rule `precommit-pc-c4`). Older trains that still live only on **Harbinger
+> Prod-12** stay on rule `precommit-pc`. Later rules upsert on `version+lane`,
+> so 7.6.1 (present on both) uses Controller-4 — the live job, not the aborted
+> Harbinger-12 leftover. These feed the patch-release comparison only (they
+> do not contribute a master card).
+>
+> **Local LCC patch versions** follow the same split: current trains on
+> **Controller-4** `Nupipe/LCC_NOS/msp-ganges-<ver>` (rule `lcc-local-c4`);
+> older `msp-ganges-7.6` + master LCC stay on **Controller-2**. GLCC patch
+> jobs were not found on Controller-4 (only Controller-2 `msp-ganges-7.6`).
 >
 > The Devtest `msp-controller-precommit` job remains the Devtest card.
 >
@@ -108,17 +119,22 @@ folder's child jobs and regex the version out of each name.*
 Observed naming (live):
 
 - SB Prod Controller-2 (`LCC_NOS`, `LCC_Dial_Tests`): `msp-master`,
-  `msp-ganges-7.6` → regex `^msp-ganges-(\d+(?:\.\d+)*)$`
+  older `msp-ganges-7.6` → regex `^msp-ganges-(\d+(?:\.\d+)*)$`
+- SB Prod Controller-4 (`LCC_NOS`): current `msp-ganges-7.6.1`,
+  `msp-ganges-7.7` → same regex
+- SB Prod Controller-4 (`Precommit_PC`): `msp-ganges-7.6.1-pc`,
+  `msp-ganges-7.7-pc` → regex `^msp-ganges-(\d+(?:\.\d+)*)-pc$`
+- Harbinger-12 (`Precommit_PC`): older `msp-ganges-7.6-pc`,
+  `msp-ganges-7.6.9.3-pc` (same `-pc` regex; excludes `msp-feat-*` /
+  `msp-ncm-*`)
 - SB Prod Controller-1 (`LKG`): `master`, `ganges-7.6-stable`,
   `ganges-7.7-stable` → regex `^ganges-(\d+(?:\.\d+)*)-stable$`
 - SB Prod Controller-1 (`Postcommit` / Smoke): `master`,
   `ganges-7.6-stable` → same `-stable` regex
-- Harbinger-12 (`Precommit_PC`): `msp-ganges-7.6-pc`, `msp-ganges-7.6.9.3-pc`
-  → regex `^msp-ganges-(\d+(?:\.\d+)*)-pc$` (deliberately excludes
-  `msp-feat-9.8-test-pc` and `msp-ncm-*-release` in the same folder)
 
-Later discovery rules **upsert** on the same `version + lane`, so `lkg-c1`
-replaces an earlier LKG hit for that train.
+Later discovery rules **upsert** on the same `version + lane`, so
+`precommit-pc-c4` / `lcc-local-c4` / `lkg-c1` replace earlier hits for
+that train.
 
 Versions therefore range from 2-part (`7.6`) to 4-part (`7.6.9.3`,
 `7.5.1.10`) and are compared numerically segment-by-segment
@@ -157,11 +173,11 @@ except the scheduled digest (which fires at most twice a day):
    LKG) has ≥ `MASTER_FAIL_THRESHOLD` (default 5) consecutive failures. The
    scheduled run posts nothing when the board is clean.
 
-`POST /api/digest/test` always attempts a Slack post for verification: the
-failure digest if anything qualifies, otherwise an all-clear. In test mode the
-post goes to `#test-msp` and **omits `@msp-help`**. The response includes
-`posted`, `count`, `patchCount`, `patchThreshold`, `reason`, `channel`,
-`slackEnabled`, and `hasBotToken`.
+`POST /api/digest/test` posts to the channel from the env file
+(`MASTER_DIGEST_CHANNEL`, else `SLACK_CHANNEL`) and uses `SLACK_MENTION` as
+configured. The failure digest is sent if anything qualifies, otherwise an
+all-clear. The response includes `posted`, `count`, `patchCount`,
+`patchThreshold`, `reason`, `channel`, `slackEnabled`, and `hasBotToken`.
 
 Transport (in priority order, all env-configurable):
  1. `SLACK_WEBHOOK_URL` — incoming webhook (10-fail alerts only).
@@ -186,16 +202,17 @@ not double-pinged by both the per-poll alert and the scheduled digest.
 |---|---|---|
 | `MASTER_FAIL_THRESHOLD` | 5 | master-block pipelines, via the scheduled digest |
 | `PATCH_FAIL_THRESHOLD` | 3 | patch-release (version-block) pipelines, via the per-poll alert |
+| `SUCCESS_THRESHOLD` | 5 | master-block pipelines, via the optional success digest (`SUCCESS_DIGEST_ENABLED=false` by default) |
 | `BuildsToTrack` (hardcoded 10) | 10 | any pipeline hitting 10 consecutive completed failures |
 
-### Testing Slack without pinging the live channel
+### Testing Slack
 
-`POST /api/digest/test` always attempts a post for verification: the failure
-digest if anything qualifies, otherwise an all-clear. **In test mode:**
- - the message posts to `#test-msp` (overriding `SLACK_CHANNEL`/`MASTER_DIGEST_CHANNEL`), and
- - the `@msp-help` mention is omitted so the live channel is not pinged.
+`POST /api/digest/test` posts to whatever channel is in the `.env`
+(`MASTER_DIGEST_CHANNEL` or `SLACK_CHANNEL`) and includes `SLACK_MENTION`. Use
+it to verify the token and the real destination channel.
 
-This makes it safe to run repeatedly while troubleshooting.
+The daily schedule is `MASTER_DIGEST_TIMES` (24-hour `HH:MM`, e.g. `09:00` or
+`21:00`) applied in each `MASTER_DIGEST_TZ` (`IST,PST` by default).
 
 ### Start / pause the channel (operator)
 
@@ -209,7 +226,8 @@ This makes it safe to run repeatedly while troubleshooting.
 | Pause only the daily digest | `MASTER_DIGEST_ENABLED=false` |
 | Stop the whole service | `systemctl stop msp-pipeline-dashboard` |
 | Make patch lanes (e.g. 7.7 LKG) alert at <10 failures | `PATCH_FAIL_THRESHOLD=3` (default 3) |
-| Verify the channel post without pinging live | `POST /api/digest/test` (auto-posts to `#test-msp`, no `@msp-help`) |
+| Verify the channel post | `POST /api/digest/test` (uses `SLACK_CHANNEL` / `MASTER_DIGEST_CHANNEL`) |
+| Post green success digest | `SUCCESS_DIGEST_ENABLED=true` + `SUCCESS_THRESHOLD=5` |
 
 While `SLACK_ENABLED=false`, events are logged
 (`[slack] (SLACK_ENABLED=false)…`) and **cooldown is not consumed**, so the
@@ -358,7 +376,7 @@ pipeline-dashboard/
 - `POST /api/refresh` — force re-discovery + poll ("Fetch latest releases").
 - `GET /api/health` — liveness.
 - `GET /api/digest/preview` — master pipelines currently ≥ `MASTER_FAIL_THRESHOLD` (no post).
-- `POST /api/digest/test` — verification post to `#test-msp` (no `@msp-help`).
+- `POST /api/digest/test` — force a digest Slack post to the `.env` channel.
 
 ---
 
@@ -428,6 +446,8 @@ establishes the ledger. Update this table at the end of each future run.
 | 13 | 2026-09-03 | 10-fail Slack alert now includes the dashboard link + Block Kit (same shape as the 09:00 digest). | ~12,000 | ~636,000 |
 | 14 | 2026-09-07 | Master LKG (`Nupipe/LKG/master`) moved from Harbinger-14 to SB Prod Controller-1. Harbinger-14 is no longer a discovery source. | ~8,000 | ~644,000 |
 | 15 | 2026-09-09 | `PATCH_FAIL_THRESHOLD` (default 3) for non-master lanes; `/api/digest/test` isolated to `#test-msp` without `@msp-help`; context + README synced (LKG move, Smoke, dual-threshold alerting). | ~22,000 | ~666,000 |
+| 16 | 2026-09-09 | Patch Precommit + Local LCC current trains (7.6.1, 7.7, …) discovered on SB Prod Controller-4 (upsert over Harbinger-12 / Controller-2 leftovers). `.env` templates gained `PATCH_FAIL_THRESHOLD`. | ~18,000 | ~684,000 |
+| 17 | 2026-09-09 | Success digest (off by default) + `SUCCESS_THRESHOLD`; digest times split into `MASTER_DIGEST_TIMES` (24h) and `MASTER_DIGEST_TZ` (IST/PST); `/api/digest/test` uses the `.env` channel again. | ~20,000 | ~704,000 |
 
 Notes on the Run 1 estimate: this counts the full agent session — reading skills
 and workspace, ~30 live Jenkins/Slack probe commands, authoring ~10 files

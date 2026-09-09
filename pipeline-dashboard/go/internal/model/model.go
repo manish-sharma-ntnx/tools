@@ -65,10 +65,11 @@ type Card struct {
 	LastTimestamp   int64   `json:"lastTimestamp"`
 	Health          *Health `json:"health"`
 	// SuccessRate is a pointer so it can serialize as null (unknown) like Node.
-	SuccessRate         *int `json:"successRate"`
-	CompletedCount      int  `json:"completedCount"`
-	ConsecutiveFailures int  `json:"consecutiveFailures"`
-	AllFailing          bool `json:"allFailing"`
+	SuccessRate          *int `json:"successRate"`
+	CompletedCount       int  `json:"completedCount"`
+	ConsecutiveFailures  int  `json:"consecutiveFailures"`
+	ConsecutiveSuccesses int  `json:"consecutiveSuccesses"`
+	AllFailing           bool `json:"allFailing"`
 }
 
 // VersionBlock clubs pipelines for one version (or the master group).

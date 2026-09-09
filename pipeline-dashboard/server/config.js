@@ -7,10 +7,12 @@
  * standard Jenkins JSON API (`/api/json`) which is what we consume.
  *
  * Versioning discovered from the live controllers:
- *   - SB prod: jobs are named `msp-master` and `msp-ganges-<version>` (e.g.
- *     msp-ganges-7.6). The GLCC folder also has a `-pc` sibling for the
- *     PC pipeline. LKG master and versioned ganges jobs also live here.
- *   - Harbinger-12 (precommit PC): jobs named `msp-ganges-<version>-pc`.
+ *   - SB prod Controller-2: `msp-master` plus older `msp-ganges-<version>`
+ *     (e.g. 7.6) in LCC_NOS / LCC_Dial_Tests.
+ *   - SB prod Controller-4: current patch Precommit PC (`msp-ganges-<ver>-pc`)
+ *     and Local LCC (`msp-ganges-<ver>`, e.g. 7.6.1, 7.7).
+ *   - SB prod Controller-1: LKG + Smoke (`ganges-<ver>-stable`).
+ *   - Harbinger-12: older Precommit PC jobs still listed there.
  *
  * "version" here is the ganges train, e.g. 7.6, 7.6.0.1, 7.5.1.10.
  */
@@ -52,6 +54,12 @@ const CONTROLLERS = {
     baseUrl: 'https://phx-p10y-sb-prod-jenkins-controller-3.corp.p10y.ntnxdpro.com',
     insecure: true,
   },
+  sbprod4: {
+    id: 'sbprod4',
+    label: 'SB Prod Controller-4',
+    baseUrl: 'https://phx-p10y-sb-prod-jenkins-controller-4.corp.p10y.ntnxdpro.com',
+    insecure: true,
+  },
 };
 
 /**
@@ -89,7 +97,8 @@ const DISCOVERY_RULES = [
     lane: 'LCC',
     masterGroup: 'msp-master',
     masterName: 'msp-master',
-    // msp-master  |  msp-ganges-7.6
+    // msp-master + older patch (e.g. 7.6). Current trains (7.6.1, 7.7, …)
+    // live on Controller-4 (lcc-local-c4) and upsert over this rule.
     versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)$/,
     jobPrefix: 'msp-ganges-',
   },
@@ -121,8 +130,8 @@ const DISCOVERY_RULES = [
     versionRegex: /^$/,
   },
   {
-    // Precommit per-version jobs on Harbinger-12. These feed the patch-release
-    // comparison. They do NOT contribute a master card (that's precommit-master).
+    // Older patch Precommit PC on Harbinger-12 (7.6, 7.6.0.x, 7.6.9.1–3).
+    // Current trains moved to Controller-4; listed first so the later rule wins.
     id: 'precommit-pc',
     controller: 'harbinger12',
     parent: ['Nupipe', 'Precommit_PC'],
@@ -134,6 +143,33 @@ const DISCOVERY_RULES = [
     versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)-pc$/,
     jobPrefix: 'msp-ganges-',
     jobSuffix: '-pc',
+  },
+  {
+    // Current patch Precommit PC (7.6.1, 7.7, …) on SB Prod Controller-4.
+    id: 'precommit-pc-c4',
+    controller: 'sbprod4',
+    parent: ['Nupipe', 'Precommit_PC'],
+    label: 'msp Precommit PC',
+    shortLabel: 'Precommit',
+    lane: 'Precommit',
+    masterName: null,
+    versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)-pc$/,
+    jobPrefix: 'msp-ganges-',
+    jobSuffix: '-pc',
+  },
+  {
+    // Current patch Local LCC (7.6.1, 7.7, …) on SB Prod Controller-4.
+    // Master LCC stays on the sbprod (Controller-2) rule above.
+    id: 'lcc-local-c4',
+    controller: 'sbprod4',
+    parent: ['Nupipe', 'LCC_NOS'],
+    label: 'msp_master Local LCC',
+    shortLabel: 'Local LCC',
+    lane: 'LCC',
+    masterGroup: 'msp-master',
+    masterName: null,
+    versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)$/,
+    jobPrefix: 'msp-ganges-',
   },
   {
     // Postcommit / smoke. Master job is on SB Prod Controller-1.
@@ -211,34 +247,71 @@ const SLACK = {
  * (default 09:00 in each listed timezone), so leadership gets a predictable
  * morning digest in both India and US-Pacific mornings.
  */
+const TZ_ALIASES = {
+  IST: 'Asia/Kolkata',
+  PST: 'America/Los_Angeles',
+  PT: 'America/Los_Angeles',
+  PDT: 'America/Los_Angeles',
+};
+
+function resolveTZ(name) {
+  const key = String(name || '').trim();
+  return TZ_ALIASES[key.toUpperCase()] || key || 'UTC';
+}
+
+function parseHHMM(hm) {
+  const [h, m] = String(hm || '09:00').split(':');
+  const hour = Number(h);
+  const minute = Number(m) || 0;
+  if (!Number.isFinite(hour) || hour < 0 || hour > 23) return null;
+  if (minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+/** TIMES (24h HH:MM) × TZ (IST,PST or IANA). Legacy "HH:MM Zone,..." still works. */
+function parseDigestSchedule() {
+  const timesSpec = process.env.MASTER_DIGEST_TIMES || '09:00';
+  const tzSpec = process.env.MASTER_DIGEST_TZ || 'IST,PST';
+  const parts = String(timesSpec)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const legacy = !process.env.MASTER_DIGEST_TZ && parts.some((p) => p.split(/\s+/).length >= 2);
+  if (legacy) {
+    return parts.map((s) => {
+      const [hm, tz] = s.split(/\s+/);
+      const parsed = parseHHMM(hm) || { hour: 9, minute: 0 };
+      return { ...parsed, tz: resolveTZ(tz || 'UTC') };
+    });
+  }
+  const tzs = String(tzSpec)
+    .split(',')
+    .map((s) => resolveTZ(s.trim()))
+    .filter(Boolean);
+  const zones = tzs.length ? tzs : ['Asia/Kolkata', 'America/Los_Angeles'];
+  const slots = [];
+  for (const hm of parts) {
+    const parsed = parseHHMM(hm);
+    if (!parsed) continue;
+    for (const tz of zones) slots.push({ ...parsed, tz });
+  }
+  return slots;
+}
+
 const MASTER_DIGEST = {
   enabled: (process.env.MASTER_DIGEST_ENABLED || 'true') !== 'false',
   // Consecutive-failure threshold that makes a master pipeline "report-worthy".
   failThreshold: Number(process.env.MASTER_FAIL_THRESHOLD || 5),
-  // Patch-release pipelines (non-master, e.g. ganges-7.7 LKG) alert when their
-  // consecutive-failure streak >= PATCH_FAIL_THRESHOLD. Default 3.
-  patchFailThreshold: Number(process.env.PATCH_FAIL_THRESHOLD || 3),
   // Channel for the digest (falls back to the general SLACK.channel).
   channel: process.env.MASTER_DIGEST_CHANNEL || process.env.SLACK_CHANNEL || '#test-msp',
-  // Local send times as { hour, minute, tz }. Default 09:00 IST and 09:00 PT.
-  // Override with MASTER_DIGEST_TIMES="09:00 Asia/Kolkata,09:00 America/Los_Angeles".
-  times: parseDigestTimes(
-    process.env.MASTER_DIGEST_TIMES ||
-      '09:00 Asia/Kolkata,09:00 America/Los_Angeles'
-  ),
+  // Slots = MASTER_DIGEST_TIMES (HH:MM) × MASTER_DIGEST_TZ (IST/PST or IANA).
+  times: parseDigestSchedule(),
 };
 
-/** Parse "HH:MM TZ,HH:MM TZ" into [{ hour, minute, tz }]. */
-function parseDigestTimes(spec) {
-  return String(spec)
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => {
-      const [hm, tz] = s.split(/\s+/);
-      const [h, m] = (hm || '09:00').split(':');
-      return { hour: Number(h) || 0, minute: Number(m) || 0, tz: tz || 'UTC' };
-    });
+// Optional green digest. Off unless SUCCESS_DIGEST_ENABLED=true.
+const SUCCESS_DIGEST = {
+  enabled: process.env.SUCCESS_DIGEST_ENABLED === 'true',
+  threshold: Number(process.env.SUCCESS_THRESHOLD || 5),
 }
 
 const SETTINGS = {
@@ -248,6 +321,8 @@ const SETTINGS = {
   host: process.env.HOST || '0.0.0.0',
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 3 * 60 * 1000),
   buildsToTrack: 10,
+  // Patch-release (non-master) lanes alert when consecutiveFailures >= this.
+  patchFailThreshold: Number(process.env.PATCH_FAIL_THRESHOLD || 3),
   httpTimeoutMs: Number(process.env.HTTP_TIMEOUT_MS || 20000),
   concurrency: Number(process.env.FETCH_CONCURRENCY || 8),
   dataDir: process.env.DATA_DIR || require('path').join(__dirname, '..', 'data'),
@@ -298,6 +373,7 @@ module.exports = {
   DISCOVERY_RULES,
   SLACK,
   MASTER_DIGEST,
+  SUCCESS_DIGEST,
   SETTINGS,
   dashboardUrl,
 };

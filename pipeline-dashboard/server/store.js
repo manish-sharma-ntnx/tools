@@ -70,6 +70,7 @@ function toPipelineCard(meta, res) {
       health: null,
       successRate: null,
       consecutiveFailures: 0,
+      consecutiveSuccesses: 0,
     };
   }
 
@@ -100,6 +101,13 @@ function toPipelineCard(meta, res) {
     } else break;
   }
 
+  let consecutiveSuccesses = 0;
+  for (const b of builds) {
+    if (b.status === 'running') continue;
+    if (b.status === 'success') consecutiveSuccesses++;
+    else break;
+  }
+
   const health = (data.healthReport && data.healthReport[0]) || null;
 
   return {
@@ -113,6 +121,7 @@ function toPipelineCard(meta, res) {
     successRate,
     completedCount: completed.length,
     consecutiveFailures,
+    consecutiveSuccesses,
     allFailing:
       completed.length >= SETTINGS.buildsToTrack &&
       completed.slice(0, SETTINGS.buildsToTrack).every((b) => b.status !== 'success'),
@@ -286,4 +295,21 @@ function getPatchFailures() {
   return failing;
 }
 
-module.exports = { poll, getSnapshot, getMasterFailures, getPatchFailures, ensureDiscovery, normalizeStatus };
+/**
+ * Return master-block pipelines whose consecutiveSuccesses >= threshold,
+ * best-first. Used by the optional success digest.
+ */
+function getMasterSuccesses(threshold) {
+  const t = Number(threshold) || 1;
+  const masterBlocks = (SNAPSHOT.versionBlocks || []).filter((b) => b.isMaster);
+  const ok = [];
+  for (const block of masterBlocks) {
+    for (const card of block.pipelines || []) {
+      if ((card.consecutiveSuccesses || 0) >= t) ok.push(card);
+    }
+  }
+  ok.sort((a, b) => (b.consecutiveSuccesses || 0) - (a.consecutiveSuccesses || 0));
+  return ok;
+}
+
+module.exports = { poll, getSnapshot, getMasterFailures, getPatchFailures, getMasterSuccesses, ensureDiscovery, normalizeStatus };
