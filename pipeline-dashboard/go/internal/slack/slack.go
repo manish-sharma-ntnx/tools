@@ -160,6 +160,7 @@ type Outcome struct {
 }
 
 func buildMessage(e model.Alert) (string, []any) {
+	// e.Window is the observed consecutive-FAILURE count, not the fetch size.
 	buildNo := "—"
 	if e.LastBuildNumber != nil {
 		buildNo = fmt.Sprintf("#%d", *e.LastBuildNumber)
@@ -215,6 +216,10 @@ func buildMessage(e model.Alert) (string, []any) {
 // recorded to persistent history regardless of whether a Slack transport is
 // configured, so the Alerts tab reflects genuine events even in log-only mode.
 func SendFailureAlert(e model.Alert) any {
+	if e.Window < 1 {
+		log.Printf("[slack] refusing to post alert with window=%d for %s", e.Window, e.Title)
+		return Outcome{Sent: false, Skipped: true, Reason: "invalid-window"}
+	}
 	if !config.Slack.Enabled {
 		log.Printf("[slack] (SLACK_ENABLED=false) would alert -> %s: %s", config.Slack.Channel, e.Title)
 		return Outcome{Sent: false, Skipped: true, Reason: "disabled"}

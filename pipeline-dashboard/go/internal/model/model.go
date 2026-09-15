@@ -98,7 +98,10 @@ type Alert struct {
 	Title           string `json:"title"`
 	Lane            string `json:"lane,omitempty"`
 	Version         string `json:"version,omitempty"`
-	URL             string `json:"url"`
+	URL string `json:"url"`
+	// Window is the actual consecutive-FAILURE streak observed (not the
+	// fetch size). Slack text must use this so we never claim "10
+	// consecutive" when the streak is shorter.
 	Window          int    `json:"window"`
 	LastBuildNumber *int   `json:"lastBuildNumber"`
 	LastResult      string `json:"lastResult"`

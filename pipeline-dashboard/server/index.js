@@ -137,6 +137,7 @@ const server = http.createServer(async (req, res) => {
       await store.poll(); // ensure a fresh snapshot
       const failing = store.getMasterFailures(MASTER_DIGEST.failThreshold);
       const patchFailing = store.getPatchFailures();
+      const devtestFailing = store.getDevtestFailures();
       const outcome = await fireDigestTest();
       return sendJson(res, 200, {
         ok: true,
@@ -144,6 +145,8 @@ const server = http.createServer(async (req, res) => {
         count: failing.length,
         patchCount: patchFailing.length,
         patchThreshold: SETTINGS.patchFailThreshold,
+        devtestCount: devtestFailing.length,
+        devtestThreshold: SETTINGS.devtestFailThreshold,
         reason: outcome.reason || '',
         channel: MASTER_DIGEST.channel,
         slackEnabled: SLACK.enabled,

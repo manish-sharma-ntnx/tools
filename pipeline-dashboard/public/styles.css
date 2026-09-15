@@ -307,6 +307,7 @@ code {
 }
 .tl-tag.main { background: var(--blue-bg); color: var(--blue); }
 .tl-tag.comp { background: var(--gray-bg); color: var(--text-dim); }
+.tl-tag.devtest { background: var(--amber-bg); color: var(--amber); }
 .tl-comp-meta { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
 .tl-comp-meta .cr { color: var(--link); }
 

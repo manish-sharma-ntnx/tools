@@ -111,6 +111,7 @@ func handleDigestTest(w http.ResponseWriter, r *http.Request) {
 	store.Poll(false)
 	failing := store.GetMasterFailures(config.MasterDigest.FailThreshold)
 	patchFailing := store.GetPatchFailures()
+	devtestFailing := store.GetDevtestFailures()
 	outcome := scheduler.FireDigestTest()
 	sendJSON(w, http.StatusOK, map[string]any{
 		"ok":               true,
@@ -122,6 +123,8 @@ func handleDigestTest(w http.ResponseWriter, r *http.Request) {
 		"slackEnabled":     config.Slack.Enabled,
 		"hasBotToken":      config.Slack.BotToken != "",
 		"patchThreshold":   config.Setting.PatchFailThreshold,
+		"devtestCount":     len(devtestFailing),
+		"devtestThreshold": config.Setting.DevtestFailThreshold,
 		"successEnabled":   config.SuccessDigest.Enabled,
 		"successThreshold": config.SuccessDigest.Threshold,
 	})

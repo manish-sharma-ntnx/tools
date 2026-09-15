@@ -34,12 +34,15 @@ var Controllers = map[string]Controller{
 }
 
 // StaticPipeline is an always-present, non-version-scoped pipeline.
+// Devtest is not a master digest lane: it uses DEVTEST_FAIL_THRESHOLD
+// and reports the observed consecutive-FAILURE streak.
 type StaticPipeline struct {
 	Key        string
 	Controller string
 	Path       []string
 	Group      string
 	Category   string
+	Lane       string
 	Title      string
 	Subtitle   string
 }
@@ -51,6 +54,7 @@ var StaticPipelines = []StaticPipeline{
 		Path:       []string{"msp-controller-precommit"},
 		Group:      "Devtest",
 		Category:   "devtest",
+		Lane:       "Precommit",
 		Title:      "Devtest Precommit",
 		Subtitle:   "msp-controller-precommit",
 	},
@@ -177,15 +181,16 @@ type SuccessDigestConfig struct {
 
 // Settings mirrors the Node SETTINGS object.
 type Settings struct {
-	Port               int
-	Host               string
-	PollInterval       time.Duration
-	BuildsToTrack      int
-	PatchFailThreshold int // PATCH_FAIL_THRESHOLD: patch/lane pipelines alert when >= N consecutive failures
-	HTTPTimeout        time.Duration
-	Concurrency        int
-	DataDir            string
-	DashboardURL       string
+	Port                 int
+	Host                 string
+	PollInterval         time.Duration
+	BuildsToTrack        int
+	PatchFailThreshold   int // PATCH_FAIL_THRESHOLD: patch-release lanes alert when >= N consecutive failures
+	DevtestFailThreshold int // DEVTEST_FAIL_THRESHOLD: static Devtest lanes alert when >= N consecutive failures
+	HTTPTimeout          time.Duration
+	Concurrency          int
+	DataDir              string
+	DashboardURL         string
 }
 
 var (
@@ -220,15 +225,16 @@ func init() {
 
 	wd, _ := os.Getwd()
 	Setting = Settings{
-		Port:               int(envInt64("PORT", 4317)),
-		Host:               env("HOST", "0.0.0.0"),
-		PollInterval:       time.Duration(envInt64("POLL_INTERVAL_MS", 3*60*1000)) * time.Millisecond,
-		BuildsToTrack:      10,
-		PatchFailThreshold: int(envInt64("PATCH_FAIL_THRESHOLD", 3)),
-		HTTPTimeout:        time.Duration(envInt64("HTTP_TIMEOUT_MS", 20000)) * time.Millisecond,
-		Concurrency:        int(envInt64("FETCH_CONCURRENCY", 8)),
-		DataDir:            env("DATA_DIR", wd+"/data"),
-		DashboardURL:       os.Getenv("DASHBOARD_URL"),
+		Port:                 int(envInt64("PORT", 4317)),
+		Host:                 env("HOST", "0.0.0.0"),
+		PollInterval:         time.Duration(envInt64("POLL_INTERVAL_MS", 3*60*1000)) * time.Millisecond,
+		BuildsToTrack:        10,
+		PatchFailThreshold:   int(envInt64("PATCH_FAIL_THRESHOLD", 3)),
+		DevtestFailThreshold: int(envInt64("DEVTEST_FAIL_THRESHOLD", 3)),
+		HTTPTimeout:          time.Duration(envInt64("HTTP_TIMEOUT_MS", 20000)) * time.Millisecond,
+		Concurrency:          int(envInt64("FETCH_CONCURRENCY", 8)),
+		DataDir:              env("DATA_DIR", wd+"/data"),
+		DashboardURL:         os.Getenv("DASHBOARD_URL"),
 	}
 }
 

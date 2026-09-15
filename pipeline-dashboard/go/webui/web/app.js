@@ -121,6 +121,20 @@ function buildComponents(data) {
   const rows = [];
   const blocks = data.versionBlocks || [];
 
+  // Static pipelines (Devtest) are not version-scoped, so they never appear
+  // in versionBlocks. Surface them as the first timeline row or they are
+  // invisible on the board while still able to Slack-alert.
+  const staticCards = (data.static || []).filter(Boolean);
+  if (staticCards.length) {
+    rows.push({
+      name: 'devtest',
+      tag: 'DEVTEST',
+      lanes: staticCards.map((c) => ({ ...c, lane: c.lane || 'Precommit' })),
+      isMaster: false,
+      isStatic: true,
+    });
+  }
+
   const masterBlock = blocks.find((b) => b.isMaster);
   if (masterBlock) {
     rows.push({
@@ -267,10 +281,10 @@ function laneCell(card) {
   const rate = card.successRate;
   const consec = card.consecutiveFailures || 0;
   const statusChip =
-    consec >= 1 && card.status !== 'success'
-      ? `<span class="chip fail">Failed${consec > 1 ? ` ×${consec}` : ''}</span>`
-      : card.status === 'running'
+    card.status === 'running'
       ? `<span class="chip test">Running</span>`
+      : consec >= 1 && card.status !== 'success'
+      ? `<span class="chip fail">Failed${consec > 1 ? ` ×${consec}` : ''}</span>`
       : `<span class="chip pass">Passing</span>`;
   const build = card.lastBuildNumber != null
     ? `<a class="stage-build" href="${card.url}" target="_blank" rel="noopener">Build #${card.lastBuildNumber} ↗</a>`
@@ -286,7 +300,10 @@ function laneCell(card) {
 function componentRow(row, idx) {
   const crMeta = row.isMaster
     ? `<span class="cr">master</span>`
+    : row.isStatic
+    ? `<span class="cr">devtest</span>`
     : `<span class="cr">${row.version || ''}</span>`;
+  const tagClass = row.isMaster ? 'main' : row.isStatic ? 'devtest' : 'comp';
   const laneCards = Array.isArray(row.lanes) ? row.lanes : [];
   const anyFail = laneCards.some((p) => p && p.allFailing);
 
@@ -314,7 +331,7 @@ function componentRow(row, idx) {
       <div class="tl-comp">
         <span class="tl-comp-caret" data-toggle="${idx}">▸</span>
         <div class="tl-comp-body">
-          <div class="tl-comp-name">${row.name} ${anyFail ? '<span class="warn">●</span>' : ''} <span class="tl-tag ${row.isMaster ? 'main' : 'comp'}">${row.tag}</span></div>
+          <div class="tl-comp-name">${row.name} ${anyFail ? '<span class="warn">●</span>' : ''} <span class="tl-tag ${tagClass}">${row.tag}</span></div>
           <div class="tl-comp-meta">${crMeta} <span class="todo-hint">· commits TODO</span></div>
         </div>
       </div>

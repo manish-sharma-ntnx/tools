@@ -123,13 +123,10 @@ func toPipelineCard(meta discovery.Meta, res jenkins.JobResult) model.Card {
 	}
 
 	// Completed builds only for success-rate + consecutive-failure math.
-	completed := 0
+	done := completedBuilds(builds)
+	completed := len(done)
 	successCount := 0
-	for _, b := range builds {
-		if b.Status == "running" {
-			continue
-		}
-		completed++
+	for _, b := range done {
 		if b.Status == "success" {
 			successCount++
 		}
@@ -140,51 +137,11 @@ func toPipelineCard(meta discovery.Meta, res jenkins.JobResult) model.Card {
 		successRate = &r
 	}
 
-	consec := 0
-	for _, b := range builds {
-		if b.Status == "running" {
-			continue
-		}
-		if b.Status == "failed" || b.Status == "aborted" || b.Status == "unstable" {
-			consec++
-		} else {
-			break
-		}
-	}
-
-	consecOK := 0
-	for _, b := range builds {
-		if b.Status == "running" {
-			continue
-		}
-		if b.Status == "success" {
-			consecOK++
-		} else {
-			break
-		}
-	}
+	consec, consecOK, allFailing := computeStreaks(done, config.Setting.BuildsToTrack)
 
 	var health *model.Health
 	if len(data.HealthReport) > 0 {
 		health = &model.Health{Score: data.HealthReport[0].Score, Description: data.HealthReport[0].Description}
-	}
-
-	// allFailing: last N completed builds contain zero successes.
-	allFailing := false
-	if completed >= config.Setting.BuildsToTrack {
-		window := 0
-		hasSuccess := false
-		for _, b := range builds {
-			if window >= config.Setting.BuildsToTrack {
-				break
-			}
-			window++
-			if b.Status == "success" {
-				hasSuccess = true
-				break
-			}
-		}
-		allFailing = !hasSuccess
 	}
 
 	base.Status = status
@@ -199,6 +156,105 @@ func toPipelineCard(meta discovery.Meta, res jenkins.JobResult) model.Card {
 	base.ConsecutiveSuccesses = consecOK
 	base.AllFailing = allFailing
 	return base
+}
+
+func completedBuilds(builds []model.Build) []model.Build {
+	out := make([]model.Build, 0, len(builds))
+	for _, b := range builds {
+		if b.Status != "running" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func latestCompleted(builds []model.Build) *model.Build {
+	for i := range builds {
+		if builds[i].Status != "running" {
+			b := builds[i]
+			return &b
+		}
+	}
+	return nil
+}
+
+// computeStreaks counts authentic Jenkins FAILURE streaks from newest
+// completed build backwards. aborted/unstable do not count as failures
+// and break the streak. allFailing is true only when the last `track`
+// completed builds are all FAILURE (in-flight builds must not inflate
+// the window).
+func computeStreaks(completed []model.Build, track int) (consecFail, consecOK int, allFailing bool) {
+	for _, b := range completed {
+		if b.Status == "failed" {
+			consecFail++
+		} else {
+			break
+		}
+	}
+	for _, b := range completed {
+		if b.Status == "success" {
+			consecOK++
+		} else {
+			break
+		}
+	}
+	if track > 0 && len(completed) >= track {
+		allFailing = true
+		for i := 0; i < track; i++ {
+			if completed[i].Status != "failed" {
+				allFailing = false
+				break
+			}
+		}
+	}
+	return
+}
+
+// failLane picks which consecutive-failure threshold applies.
+type failLane int
+
+const (
+	failLaneMaster failLane = iota
+	failLanePatch
+	failLaneDevtest
+)
+
+func failLaneOf(key string, masterKeys, devtestKeys map[string]struct{}) failLane {
+	if _, ok := masterKeys[key]; ok {
+		return failLaneMaster
+	}
+	if _, ok := devtestKeys[key]; ok {
+		return failLaneDevtest
+	}
+	return failLanePatch
+}
+
+func thresholdFor(lane failLane) (n int, ok bool) {
+	switch lane {
+	case failLaneDevtest:
+		return config.Setting.DevtestFailThreshold, true
+	case failLanePatch:
+		return config.Setting.PatchFailThreshold, true
+	default:
+		return 0, false
+	}
+}
+
+// shouldFireFailureAlert is the Slack gate:
+//  1. 10-in-a-row (allFailing) — any reachable pipeline
+//  2. DEVTEST_FAIL_THRESHOLD — static Devtest
+//  3. PATCH_FAIL_THRESHOLD — version-block (patch-release) lanes
+//
+// Master lanes stay on the scheduled digest so they are not double-pinged.
+func shouldFireFailureAlert(card model.Card, lane failLane) bool {
+	if !card.Reachable {
+		return false
+	}
+	if card.AllFailing {
+		return true
+	}
+	t, ok := thresholdFor(lane)
+	return ok && card.ConsecutiveFailures >= t
 }
 
 // ensureDiscovery refreshes folder listing if stale (>30m) or forced.
@@ -221,6 +277,7 @@ func buildFetchList(d discovery.Result) []discovery.Meta {
 		list = append(list, discovery.Meta{
 			Key: s.Key, Controller: s.Controller, Path: s.Path,
 			Title: s.Title, Subtitle: s.Subtitle, Category: s.Category,
+			Lane: s.Lane,
 		})
 	}
 	list = append(list, d.Masters...)
@@ -314,42 +371,47 @@ func Poll(forceDiscovery bool) model.Snapshot {
 
 	versionBlocks := assembleVersionBlocks(d, cardByKey)
 
-	// Alerting:
-	//  1) per-pipeline: last N completed builds all failed (allFailing).
-	//  2) patch-threshold alert: non-master pipelines with consecutiveFailures
-	//     >= PATCH_FAIL_THRESHOLD get a Slack alert too (e.g. ganges-7.7 LKG at
-	//     6 streaks when PATCH_FAIL_THRESHOLD=3). Master-block pipelines are
-	//     handled by the daily scheduler/digest, so they are excluded here to
-	//     avoid duplicate pings.
-	alerts := []model.Alert{}
-	for _, card := range allCards {
-		if !card.AllFailing && card.ConsecutiveFailures < config.Setting.PatchFailThreshold {
+	masterKeys := map[string]struct{}{}
+	for _, b := range versionBlocks {
+		if !b.IsMaster {
 			continue
 		}
-		lastResult := "FAILURE"
-		if len(card.Builds) > 0 && model.Deref(card.Builds[0].Result) != "" {
-			lastResult = model.Deref(card.Builds[0].Result)
+		for _, c := range b.Pipelines {
+			masterKeys[c.Key] = struct{}{}
+		}
+	}
+	devtestKeys := map[string]struct{}{}
+	for _, s := range config.StaticPipelines {
+		devtestKeys[s.Key] = struct{}{}
+	}
+
+	// Alerting:
+	//  1) per-pipeline: last N completed builds are all FAILURE (allFailing).
+	//  2) DEVTEST_FAIL_THRESHOLD / PATCH_FAIL_THRESHOLD for those lanes.
+	//     Slack text uses the observed streak (not BuildsToTrack).
+	alerts := []model.Alert{}
+	for _, card := range allCards {
+		if !shouldFireFailureAlert(card, failLaneOf(card.Key, masterKeys, devtestKeys)) {
+			continue
+		}
+		lastNum := card.LastBuildNumber
+		lastResult := ""
+		if lb := latestCompleted(card.Builds); lb != nil {
+			n := lb.Number
+			lastNum = &n
+			lastResult = model.Deref(lb.Result)
+			if lastResult == "" {
+				lastResult = strings.ToUpper(lb.Status)
+			}
 		}
 		entry := model.Alert{
 			Key: card.Key, Title: card.Title, Lane: model.Deref(card.Lane), Version: model.Deref(card.Version),
-			URL: card.URL, Window: config.Setting.BuildsToTrack,
-			LastBuildNumber: card.LastBuildNumber, LastResult: lastResult,
+			URL: card.URL, Window: card.ConsecutiveFailures,
+			LastBuildNumber: lastNum, LastResult: lastResult,
 			At: time.Now().UnixMilli(),
 		}
-		// Fire Slack for the 10-in-a-row rule always; for the patch-threshold
-		// rule only on non-master pipelines (master lanes are served by the
-		// daily digest and GetMasterFailures).
 		if alertSender != nil {
-			isMaster := false
-			for _, m := range d.Masters {
-				if m.Key == card.Key {
-					isMaster = true
-					break
-				}
-			}
-			if card.AllFailing || (!isMaster && card.ConsecutiveFailures >= config.Setting.PatchFailThreshold) {
-				entry.Outcome = alertSender(entry)
-			}
+			entry.Outcome = alertSender(entry)
 		}
 		alerts = append(alerts, entry)
 	}
@@ -423,10 +485,8 @@ func GetMasterFailures(threshold int) []model.Card {
 	return failing
 }
 
-// GetPatchFailures returns non-master (version-block) pipelines with
-// consecutiveFailures >= PATCH_FAIL_THRESHOLD, worst-first. Used to alert on
-// failing patch-release lanes (e.g. ganges-7.7 LKG) separate from the master
-// digest.
+// GetPatchFailures returns version-block (non-master) pipelines with
+// consecutiveFailures >= PATCH_FAIL_THRESHOLD, worst-first.
 func GetPatchFailures() []model.Card {
 	threshold := config.Setting.PatchFailThreshold
 	if threshold < 1 {
@@ -448,6 +508,33 @@ func GetPatchFailures() []model.Card {
 		}
 	}
 	// worst-first
+	for i := 0; i < len(failing); i++ {
+		for j := i + 1; j < len(failing); j++ {
+			if failing[j].ConsecutiveFailures > failing[i].ConsecutiveFailures {
+				failing[i], failing[j] = failing[j], failing[i]
+			}
+		}
+	}
+	return failing
+}
+
+// GetDevtestFailures returns static Devtest cards with consecutiveFailures >=
+// DEVTEST_FAIL_THRESHOLD, worst-first.
+func GetDevtestFailures() []model.Card {
+	threshold := config.Setting.DevtestFailThreshold
+	if threshold < 1 {
+		threshold = 1
+	}
+	mu.RLock()
+	staticCards := snapshot.Static
+	mu.RUnlock()
+
+	failing := []model.Card{}
+	for _, card := range staticCards {
+		if card.ConsecutiveFailures >= threshold {
+			failing = append(failing, card)
+		}
+	}
 	for i := 0; i < len(failing); i++ {
 		for j := i + 1; j < len(failing); j++ {
 			if failing[j].ConsecutiveFailures > failing[i].ConsecutiveFailures {

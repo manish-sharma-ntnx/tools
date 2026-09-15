@@ -78,6 +78,7 @@ Identical to the Node version. Key ones:
 | `SLACK_CHANNEL` | `#test-msp` | Alert/digest channel |
 | `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures to report a master pipeline |
 | `PATCH_FAIL_THRESHOLD` | `3` | Consecutive failures to alert a patch lane |
+| `DEVTEST_FAIL_THRESHOLD` | `3` | Consecutive failures to alert static Devtest |
 | `SUCCESS_DIGEST_ENABLED` | `false` | Optional green digest for succeeding master lanes |
 | `SUCCESS_THRESHOLD` | `5` | Consecutive successes for the success digest |
 | `MASTER_DIGEST_TIMES` | `09:00` | Daily clock times (`HH:MM`, 24-hour) |

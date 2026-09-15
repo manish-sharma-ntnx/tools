@@ -75,6 +75,7 @@ const STATIC_PIPELINES = [
     path: ['msp-controller-precommit'],
     group: 'Devtest',
     category: 'devtest',
+    lane: 'Precommit',
     title: 'Devtest Precommit',
     subtitle: 'msp-controller-precommit',
   },
@@ -321,8 +322,10 @@ const SETTINGS = {
   host: process.env.HOST || '0.0.0.0',
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 3 * 60 * 1000),
   buildsToTrack: 10,
-  // Patch-release (non-master) lanes alert when consecutiveFailures >= this.
+  // Patch-release (non-master version-block) lanes alert when consecutiveFailures >= this.
   patchFailThreshold: Number(process.env.PATCH_FAIL_THRESHOLD || 3),
+  // Static Devtest lanes alert when consecutiveFailures >= this.
+  devtestFailThreshold: Number(process.env.DEVTEST_FAIL_THRESHOLD || 3),
   httpTimeoutMs: Number(process.env.HTTP_TIMEOUT_MS || 20000),
   concurrency: Number(process.env.FETCH_CONCURRENCY || 8),
   dataDir: process.env.DATA_DIR || require('path').join(__dirname, '..', 'data'),

@@ -92,7 +92,9 @@ function postJson(url, headers, payload) {
   });
 }
 
-/** Build the alert text + Block Kit for a failing pipeline (Jenkins + dashboard). */
+/** Build the alert text + Block Kit for a failing pipeline (Jenkins + dashboard).
+ *  `entry.window` is the observed consecutive-FAILURE count, not the fetch size.
+ */
 function buildMessage(entry) {
   const dashUrl = dashboardUrl();
   const buildNo = entry.lastBuildNumber != null ? `#${entry.lastBuildNumber}` : '—';
@@ -138,6 +140,10 @@ function buildMessage(entry) {
  * Returns { sent, skipped, reason }.
  */
 async function sendFailureAlert(entry) {
+  if (!entry || !(entry.window > 0)) {
+    console.warn(`[slack] refusing to post alert with window=${entry && entry.window} for ${entry && entry.title}`);
+    return { sent: false, skipped: true, reason: 'invalid-window' };
+  }
   if (!SLACK.enabled) {
     console.warn(`[slack] (SLACK_ENABLED=false) would alert -> ${SLACK.channel}: ${entry.title}`);
     return { sent: false, skipped: true, reason: 'disabled' };

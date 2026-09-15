@@ -3,8 +3,8 @@
 Leadership-facing health board for MSP Jenkins pipelines: **Devtest**, **Master**
 (Precommit / Local LCC / GLCC / Smoke) plus standalone **LKG**, and **Patch
 Releases**, with automatic version discovery. Slack alerts when a pipeline fails
-its last 10 builds, or when a **patch** lane hits `PATCH_FAIL_THRESHOLD`
-(default 3).
+its last 10 builds, when a **patch** lane hits `PATCH_FAIL_THRESHOLD` (default 3),
+or when **Devtest** hits `DEVTEST_FAIL_THRESHOLD` (default 3).
 
 ![preview](docs/preview.png)
 
@@ -75,6 +75,7 @@ SLACK_BOT_TOKEN=xoxb-...
 SLACK_CHANNEL=#test-msp
 DASHBOARD_URL=http://<this-host-fqdn-or-ip>:4317
 PATCH_FAIL_THRESHOLD=3
+DEVTEST_FAIL_THRESHOLD=3
 ```
 
 Leave `SLACK_BOT_TOKEN` / `SLACK_WEBHOOK_URL` unset to run the dashboard in
@@ -123,7 +124,8 @@ Three kinds of Slack messages go to `#test-msp` (or `SLACK_CHANNEL`):
 | Message | When it fires | How to pause just this one |
 |---|---|---|
 | **10-fail alert** | A pipeline’s last 10 completed builds are all non-success | `SLACK_ENABLED=false` (or unset the webhook/bot token) |
-| **Patch-threshold alert** | A **non-master** lane has ≥ `PATCH_FAIL_THRESHOLD` (default 3) consecutive failures | `SLACK_ENABLED=false`, or raise / unset `PATCH_FAIL_THRESHOLD` |
+| **Patch-threshold alert** | A **patch** lane has ≥ `PATCH_FAIL_THRESHOLD` (default 3) consecutive failures | `SLACK_ENABLED=false`, or raise `PATCH_FAIL_THRESHOLD` |
+| **Devtest-threshold alert** | Static Devtest has ≥ `DEVTEST_FAIL_THRESHOLD` (default 3) consecutive failures | `SLACK_ENABLED=false`, or raise `DEVTEST_FAIL_THRESHOLD` |
 | **Master digest** | 09:00 IST and 09:00 US-Pacific, only if a master lane has ≥ 5 consecutive failures | `MASTER_DIGEST_ENABLED=false` |
 
 The dashboard itself does **not** stop when Slack is paused. Jenkins polling,
@@ -184,10 +186,11 @@ MASTER_DIGEST_ENABLED=false
 
 then `sudo systemctl restart msp-pipeline-dashboard`.
 
-Raise or lower the patch-lane bar without touching master:
+Raise or lower the patch or Devtest bar without touching master:
 
 ```ini
 PATCH_FAIL_THRESHOLD=3
+DEVTEST_FAIL_THRESHOLD=3
 ```
 
 ### Pause everything including the dashboard
@@ -281,6 +284,7 @@ MASTER_FAIL_THRESHOLD=5
 MASTER_DIGEST_TIMES=09:00
 MASTER_DIGEST_TZ=IST,PST
 PATCH_FAIL_THRESHOLD=3
+DEVTEST_FAIL_THRESHOLD=3
 SUCCESS_DIGEST_ENABLED=false
 SUCCESS_THRESHOLD=5
 ```
@@ -368,7 +372,8 @@ the dashboard.
 | `SLACK_COOLDOWN_MS` | `21600000` | Per-pipeline re-alert suppression (6h) |
 | `MASTER_DIGEST_ENABLED` | `true` | Toggle the scheduled master digest only |
 | `MASTER_FAIL_THRESHOLD` | `5` | Consecutive failures that make a **master** pipeline report-worthy |
-| `PATCH_FAIL_THRESHOLD` | `3` | Consecutive failures that make a **patch (non-master)** pipeline alert |
+| `PATCH_FAIL_THRESHOLD` | `3` | Consecutive failures that make a **patch-release** pipeline alert |
+| `DEVTEST_FAIL_THRESHOLD` | `3` | Consecutive failures that make **static Devtest** alert |
 | `SUCCESS_DIGEST_ENABLED` | `false` | When `true`, also post master lanes that are succeeding |
 | `SUCCESS_THRESHOLD` | `5` | Consecutive successes that make a master lane report-worthy |
 | `MASTER_DIGEST_CHANNEL` | `SLACK_CHANNEL` | Channel for the digest and `/api/digest/test` |
@@ -428,8 +433,10 @@ curl -X POST http://<host>:4317/api/digest/test | jq
 poll loop (every 3 min) ──► in-memory snapshot (per-pipeline consecutiveFailures)
            │
            ├─ any pipeline, last 10 completed all failed  ──► Slack 10-fail alert
-           └─ patch lane, consecutiveFailures ≥ PATCH_FAIL_THRESHOLD
-                                                         ──► Slack patch alert
+           ├─ patch lane, consecutiveFailures ≥ PATCH_FAIL_THRESHOLD
+           │                                             ──► Slack patch alert
+           └─ Devtest, consecutiveFailures ≥ DEVTEST_FAIL_THRESHOLD
+                                                         ──► Slack Devtest alert
                                                              (same cooldown)
 
         daily timer (09:00 IST / 09:00 PT, DST-aware)
@@ -462,7 +469,8 @@ curl -s -X POST http://<host>:4317/api/digest/test
 - **Patch-release comparison** — pick any two versions from dropdowns and compare
   their lanes side by side.
 - **Slack alert** to `#test-msp` tagging `@msp-help` when the last 10 builds
-  fail, or when a patch lane hits `PATCH_FAIL_THRESHOLD` (default 3).
+  fail, when a patch lane hits `PATCH_FAIL_THRESHOLD` (default 3), or when
+  Devtest hits `DEVTEST_FAIL_THRESHOLD` (default 3).
 - **Scheduled master digest** at 09:00 IST and 09:00 US-Pacific.
 - **Nutanix-themed** UI with live/stale indicator and controller reachability.
 
