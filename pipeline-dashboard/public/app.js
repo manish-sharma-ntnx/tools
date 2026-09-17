@@ -135,12 +135,12 @@ function buildComponents(data) {
     });
   }
 
-  const masterBlock = blocks.find((b) => b.isMaster);
-  if (masterBlock) {
+  for (const b of blocks.filter((x) => x.isMaster)) {
+    const name = b.version || b.label || 'master';
     rows.push({
-      name: 'master',
-      tag: 'MAIN',
-      lanes: masterBlock.pipelines,
+      name,
+      tag: name === 'msp-master' ? 'MSP' : 'MAIN',
+      lanes: b.pipelines,
       isMaster: true,
     });
   }
@@ -169,13 +169,17 @@ function renderKpis(data) {
   const cards = allCards(data);
   const s = data.stats || {};
 
-  const masterBlock = (data.versionBlocks || []).find((b) => b.isMaster);
-  const masterLanes = masterBlock && Array.isArray(masterBlock.pipelines) ? masterBlock.pipelines : [];
-  // First widget is *master* LKG, not the newest successful LKG of any train.
-  const masterLkg = masterLanes.find((p) => p.lane === 'LKG') || null;
-  const smokeRows = ['Precommit', 'LCC', 'GLCC', 'Smoke']
-    .map((lane) => masterLanes.find((p) => p.lane === lane))
-    .filter(Boolean);
+  const masterBlocks = (data.versionBlocks || []).filter((b) => b.isMaster);
+  const blockNamed = (name) => masterBlocks.find((b) => b.version === name);
+  const productLanes = (blockNamed('master') && blockNamed('master').pipelines) || [];
+  const mspLanes = (blockNamed('msp-master') && blockNamed('msp-master').pipelines) || [];
+  // Hero KPI is product master LKG (Nupipe/LKG/master), not ValPromote.
+  const masterLkg = productLanes.find((p) => p.lane === 'LKG') || null;
+  const smokeRows = [
+    ...['Precommit', 'LCC', 'GLCC'].map((lane) => mspLanes.find((p) => p.lane === lane)),
+    productLanes.find((p) => p.lane === 'Smoke'),
+    mspLanes.find((p) => p.lane === 'LKG'),
+  ].filter(Boolean);
 
   const failing = cards.filter((c) => c.allFailing);
   const failNames = [...new Set(failing.map((c) => c.title))];
@@ -299,7 +303,7 @@ function laneCell(card) {
 
 function componentRow(row, idx) {
   const crMeta = row.isMaster
-    ? `<span class="cr">master</span>`
+    ? `<span class="cr">${row.name}</span>`
     : row.isStatic
     ? `<span class="cr">devtest</span>`
     : `<span class="cr">${row.version || ''}</span>`;

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/nutanix/msp-pipeline-dashboard/internal/config"
+	"github.com/nutanix/msp-pipeline-dashboard/internal/discovery"
 	"github.com/nutanix/msp-pipeline-dashboard/internal/model"
 )
 
@@ -124,6 +125,39 @@ func TestFailThresholdDefaults(t *testing.T) {
 	}
 	if config.Setting.BuildsToTrack != 10 {
 		t.Fatalf("BuildsToTrack=%d, want 10", config.Setting.BuildsToTrack)
+	}
+}
+
+func TestAssembleVersionBlocksSplitsMspMasterAndMaster(t *testing.T) {
+	d := discovery.Result{
+		Masters: []discovery.Meta{
+			{Key: "pre", MasterGroup: "msp-master", Lane: "Precommit"},
+			{Key: "lkg-vp", MasterGroup: "msp-master", Lane: "LKG"},
+			{Key: "smoke", MasterGroup: "master", Lane: "Smoke"},
+			{Key: "lkg", MasterGroup: "master", Lane: "LKG"},
+		},
+	}
+	cards := map[string]model.Card{
+		"pre":    {Key: "pre"},
+		"lkg-vp": {Key: "lkg-vp"},
+		"smoke":  {Key: "smoke"},
+		"lkg":    {Key: "lkg"},
+	}
+	blocks := assembleVersionBlocks(d, cards)
+	if len(blocks) != 2 {
+		t.Fatalf("blocks=%d, want 2 master rows", len(blocks))
+	}
+	if !blocks[0].IsMaster || blocks[0].Version != "msp-master" {
+		t.Fatalf("first block=%s isMaster=%v, want msp-master", blocks[0].Version, blocks[0].IsMaster)
+	}
+	if !blocks[1].IsMaster || blocks[1].Version != "master" {
+		t.Fatalf("second block=%s isMaster=%v, want master", blocks[1].Version, blocks[1].IsMaster)
+	}
+	if keysOf(blocks[0].Pipelines)[0] != "pre" || keysOf(blocks[0].Pipelines)[1] != "lkg-vp" {
+		t.Fatalf("msp-master pipelines=%v", keysOf(blocks[0].Pipelines))
+	}
+	if keysOf(blocks[1].Pipelines)[0] != "smoke" || keysOf(blocks[1].Pipelines)[1] != "lkg" {
+		t.Fatalf("master pipelines=%v", keysOf(blocks[1].Pipelines))
 	}
 }
 

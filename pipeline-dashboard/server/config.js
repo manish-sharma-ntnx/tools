@@ -7,11 +7,13 @@
  * standard Jenkins JSON API (`/api/json`) which is what we consume.
  *
  * Versioning discovered from the live controllers:
- *   - SB prod Controller-2: `msp-master` plus older `msp-ganges-<version>`
- *     (e.g. 7.6) in LCC_NOS / LCC_Dial_Tests.
+ *   - SB prod Controller-2: `msp-master` plus older NOS `msp-ganges-<version>`
+ *     (e.g. 7.6) in LCC_NOS / LCC_Dial_Tests. PC siblings in LCC_PC /
+ *     LCC_Dial_Tests (`-pc`) win when present.
  *   - SB prod Controller-4: current patch Precommit PC (`msp-ganges-<ver>-pc`)
- *     and Local LCC (`msp-ganges-<ver>`, e.g. 7.6.1, 7.7).
- *   - SB prod Controller-1: LKG + Smoke (`ganges-<ver>-stable`).
+ *     and Local LCC PC (`LCC_PC/msp-ganges-<ver>-pc`, e.g. 7.6.1, 7.7).
+ *   - SB prod Controller-1: LKG + Smoke prefer `ganges-<ver>-stable-pc`;
+ *     NOS `-stable` is fallback when no PC job exists.
  *   - Harbinger-12: older Precommit PC jobs still listed there.
  *
  * "version" here is the ganges train, e.g. 7.6, 7.6.0.1, 7.5.1.10.
@@ -98,8 +100,8 @@ const DISCOVERY_RULES = [
     lane: 'LCC',
     masterGroup: 'msp-master',
     masterName: 'msp-master',
-    // msp-master + older patch (e.g. 7.6). Current trains (7.6.1, 7.7, …)
-    // live on Controller-4 (lcc-local-c4) and upsert over this rule.
+    // msp-master + older NOS patch (e.g. 7.6). PC siblings and current
+    // trains upsert over this via the later LCC_PC rules.
     versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)$/,
     jobPrefix: 'msp-ganges-',
   },
@@ -112,9 +114,23 @@ const DISCOVERY_RULES = [
     lane: 'GLCC',
     masterGroup: 'msp-master',
     masterName: 'msp-master',
-    // ignore the -pc siblings for the primary card (tracked separately if desired)
+    // NOS job only; the -pc sibling is picked up by glcc-pc below.
     versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)$/,
     jobPrefix: 'msp-ganges-',
+  },
+  {
+    // Prefer PC GLCC (e.g. msp-ganges-7.6-pc) over the NOS sibling.
+    id: 'glcc-pc',
+    controller: 'sbprod',
+    parent: ['Nupipe', 'LCC_Dial_Tests'],
+    label: 'msp_master GLCC',
+    shortLabel: 'GLCC',
+    lane: 'GLCC',
+    masterGroup: 'msp-master',
+    masterName: null,
+    versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)-pc$/,
+    jobPrefix: 'msp-ganges-',
+    jobSuffix: '-pc',
   },
   {
     // Precommit MASTER: a real msp-master job on SB Prod Controller-3. This is the
@@ -128,6 +144,18 @@ const DISCOVERY_RULES = [
     masterGroup: 'msp-master',
     masterName: 'msp-master',
     // No version-scoped jobs consumed from here; master only.
+    versionRegex: /^$/,
+  },
+  {
+    // msp-master LKG is ValPromote, not the product LKG/master job.
+    id: 'lkg-valpromote',
+    controller: 'sbprod1',
+    parent: ['Nupipe', 'LKG_ValPromote'],
+    label: 'msp-master LKG',
+    shortLabel: 'msp-master LKG',
+    lane: 'LKG',
+    masterGroup: 'msp-master',
+    masterName: 'master',
     versionRegex: /^$/,
   },
   {
@@ -159,8 +187,8 @@ const DISCOVERY_RULES = [
     jobSuffix: '-pc',
   },
   {
-    // Current patch Local LCC (7.6.1, 7.7, …) on SB Prod Controller-4.
-    // Master LCC stays on the sbprod (Controller-2) rule above.
+    // NOS Local LCC on Controller-4 — fallback when no PC job exists
+    // (e.g. 7.6.0.10). PC jobs win via lcc-local-c4-pc below.
     id: 'lcc-local-c4',
     controller: 'sbprod4',
     parent: ['Nupipe', 'LCC_NOS'],
@@ -173,49 +201,90 @@ const DISCOVERY_RULES = [
     jobPrefix: 'msp-ganges-',
   },
   {
-    // Postcommit / smoke. Master job is on SB Prod Controller-1.
+    // Older patch Local LCC PC (e.g. 7.6) on Controller-2.
+    id: 'lcc-local-pc',
+    controller: 'sbprod',
+    parent: ['Nupipe', 'LCC_PC'],
+    label: 'msp_master Local LCC',
+    shortLabel: 'Local LCC',
+    lane: 'LCC',
+    masterGroup: 'msp-master',
+    masterName: null,
+    versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)-pc$/,
+    jobPrefix: 'msp-ganges-',
+    jobSuffix: '-pc',
+  },
+  {
+    // Current patch Local LCC PC (7.6.1, 7.7, …) on Controller-4.
+    id: 'lcc-local-c4-pc',
+    controller: 'sbprod4',
+    parent: ['Nupipe', 'LCC_PC'],
+    label: 'msp_master Local LCC',
+    shortLabel: 'Local LCC',
+    lane: 'LCC',
+    masterGroup: 'msp-master',
+    masterName: null,
+    versionRegex: /^msp-ganges-(\d+(?:\.\d+)*)-pc$/,
+    jobPrefix: 'msp-ganges-',
+    jobSuffix: '-pc',
+  },
+  {
+    // Postcommit / smoke lives on the product `master` row, not msp-master.
+    // Versioned NOS jobs are fallback; smoke-pc upserts the PC siblings.
     id: 'smoke',
     controller: 'sbprod1',
     parent: ['Postcommit'],
     label: 'Smoke',
     shortLabel: 'Smoke',
     lane: 'Smoke',
-    masterGroup: 'msp-master',
+    masterGroup: 'master',
     masterName: 'master',
     versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable$/,
     jobPrefix: 'ganges-',
     jobSuffix: '-stable',
   },
   {
-    // Master LKG on SB Prod Controller-1 (Nupipe/LKG/master).
+    id: 'smoke-pc',
+    controller: 'sbprod1',
+    parent: ['Postcommit'],
+    label: 'Smoke',
+    shortLabel: 'Smoke',
+    lane: 'Smoke',
+    masterGroup: 'master',
+    masterName: null,
+    versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable-pc$/,
+    jobPrefix: 'ganges-',
+    jobSuffix: '-stable-pc',
+  },
+  {
+    // Product master LKG on SB Prod Controller-1 (Nupipe/LKG/master).
+    // Versioned NOS (`ganges-<ver>-stable`) is fallback; lkg-c1 prefers PC.
     id: 'lkg',
     controller: 'sbprod1',
     parent: ['Nupipe', 'LKG'],
     label: 'LKG',
     shortLabel: 'LKG',
     lane: 'LKG',
-    masterGroup: 'lkg',
+    masterGroup: 'master',
     masterName: 'master',
-    // ganges-7.6-stable  (exclude the -pc and other trains like files-/ncc-)
     versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable$/,
     jobPrefix: 'ganges-',
     jobSuffix: '-stable',
   },
   {
-    // Current LKG home (7.6.x, 7.7, …). Versioned jobs only — master LKG is
-    // the lkg rule above (sbprod1). Listed after `lkg` so overlapping versions
-    // prefer this controller.
+    // Versioned LKG PC (`ganges-<ver>-stable-pc`, including 7.6.x and 7.7).
+    // Listed after `lkg` so PC wins when both NOS and PC jobs exist.
     id: 'lkg-c1',
     controller: 'sbprod1',
     parent: ['Nupipe', 'LKG'],
     label: 'LKG',
     shortLabel: 'LKG',
     lane: 'LKG',
-    masterGroup: 'lkg',
+    masterGroup: 'master',
     masterName: null,
-    versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable$/,
+    versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable-pc$/,
     jobPrefix: 'ganges-',
-    jobSuffix: '-stable',
+    jobSuffix: '-stable-pc',
   },
 ];
 
@@ -240,8 +309,8 @@ const SLACK = {
 /**
  * Scheduled "master pipeline health" digest.
  *
- * Rule: if any MASTER pipeline (the whole msp-master group — Precommit, Local
- * LCC, GLCC — plus standalone LKG) has >= `masterFailThreshold` consecutive
+ * Rule: if any MASTER pipeline (msp-master: Precommit / Local LCC / GLCC /
+ * ValPromote LKG, plus master: Smoke / LKG) has >= `masterFailThreshold` consecutive
  * build failures, post the failing pipeline(s) to Slack.
  *
  * This is NOT a per-poll alert; it fires only at the configured local times

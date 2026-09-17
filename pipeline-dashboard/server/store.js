@@ -190,21 +190,46 @@ function buildFetchList(discovery) {
   return list;
 }
 
-/** Assemble version blocks (clubbing master + patch releases per user's spec). */
+const MASTER_BLOCK_ORDER = ['msp-master', 'master'];
+
+function masterGroupOf(meta) {
+  const g = meta && meta.masterGroup;
+  if (!g || g === 'lkg' || g === 'other') return 'master';
+  return g;
+}
+
+/** Assemble version blocks. msp-master and product master stay separate. */
 function assembleVersionBlocks(discovery, cardByKey) {
   const blocks = [];
 
-  // Master block clubs all lane masters together.
-  const masterPipelines = discovery.masters
-    .map((m) => cardByKey.get(m.key))
-    .filter(Boolean);
-  if (masterPipelines.length) {
+  const grouped = new Map();
+  for (const m of discovery.masters || []) {
+    const card = cardByKey.get(m.key);
+    if (!card) continue;
+    const g = masterGroupOf(m);
+    if (!grouped.has(g)) grouped.set(g, []);
+    grouped.get(g).push(card);
+  }
+  for (const g of MASTER_BLOCK_ORDER) {
+    const pipelines = grouped.get(g);
+    if (!pipelines || !pipelines.length) continue;
     blocks.push({
-      version: 'master',
-      train: 'master',
+      version: g,
+      train: g,
       isMaster: true,
-      label: 'Master',
-      pipelines: masterPipelines,
+      label: g,
+      pipelines,
+    });
+    grouped.delete(g);
+  }
+  for (const [g, pipelines] of grouped) {
+    if (!pipelines.length) continue;
+    blocks.push({
+      version: g,
+      train: g,
+      isMaster: true,
+      label: g,
+      pipelines,
     });
   }
 
@@ -305,7 +330,7 @@ function getSnapshot() {
 
 /**
  * Return the master-block pipelines whose consecutiveFailures >= threshold.
- * "Master" = every pipeline in blocks flagged isMaster (msp-master group + LKG).
+ * "Master" = every pipeline in blocks flagged isMaster (msp-master + master).
  * Sorted worst-first (most consecutive failures at the top).
  */
 function getMasterFailures(threshold) {

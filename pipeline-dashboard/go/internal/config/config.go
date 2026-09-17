@@ -78,8 +78,8 @@ type DiscoveryRule struct {
 // DiscoveryRules mirrors the Node DISCOVERY_RULES array (order preserved).
 var DiscoveryRules = []DiscoveryRule{
 	{
-		// Master Local LCC + older patch (e.g. 7.6). Current trains (7.6.1,
-		// 7.7, …) live on Controller-4 (lcc-local-c4) and upsert over this.
+		// Master Local LCC + older NOS patch (e.g. 7.6). PC siblings and
+		// current trains upsert over this via the later LCC_PC rules.
 		ID: "lcc-local", Controller: "sbprod", Parent: []string{"Nupipe", "LCC_NOS"},
 		Label: "msp_master Local LCC", ShortLabel: "Local LCC", Lane: "LCC",
 		MasterGroup: "msp-master", MasterName: "msp-master",
@@ -89,13 +89,28 @@ var DiscoveryRules = []DiscoveryRule{
 		ID: "glcc", Controller: "sbprod", Parent: []string{"Nupipe", "LCC_Dial_Tests"},
 		Label: "msp_master GLCC", ShortLabel: "GLCC", Lane: "GLCC",
 		MasterGroup: "msp-master", MasterName: "msp-master",
+		// NOS job only; the -pc sibling is picked up by glcc-pc below.
 		VersionRegex: regexp.MustCompile(`^msp-ganges-(\d+(?:\.\d+)*)$`), JobPrefix: "msp-ganges-",
+	},
+	{
+		// Prefer PC GLCC (e.g. msp-ganges-7.6-pc) over the NOS sibling.
+		ID: "glcc-pc", Controller: "sbprod", Parent: []string{"Nupipe", "LCC_Dial_Tests"},
+		Label: "msp_master GLCC", ShortLabel: "GLCC", Lane: "GLCC",
+		MasterGroup: "msp-master", MasterName: "",
+		VersionRegex: regexp.MustCompile(`^msp-ganges-(\d+(?:\.\d+)*)-pc$`), JobPrefix: "msp-ganges-", JobSuffix: "-pc",
 	},
 	{
 		ID: "precommit-master", Controller: "sbprod3", Parent: []string{"Nupipe", "Precommit_NOS"},
 		Label: "msp Precommit", ShortLabel: "Precommit", Lane: "Precommit",
 		MasterGroup: "msp-master", MasterName: "msp-master",
 		// No version-scoped jobs consumed here; master only. Regex never matches.
+		VersionRegex: regexp.MustCompile(`^$`),
+	},
+	{
+		// msp-master LKG is ValPromote, not the product LKG/master job.
+		ID: "lkg-valpromote", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG_ValPromote"},
+		Label: "msp-master LKG", ShortLabel: "msp-master LKG", Lane: "LKG",
+		MasterGroup: "msp-master", MasterName: "master",
 		VersionRegex: regexp.MustCompile(`^$`),
 	},
 	{
@@ -114,35 +129,56 @@ var DiscoveryRules = []DiscoveryRule{
 		VersionRegex: regexp.MustCompile(`^msp-ganges-(\d+(?:\.\d+)*)-pc$`), JobPrefix: "msp-ganges-", JobSuffix: "-pc",
 	},
 	{
-		// Current patch Local LCC (7.6.1, 7.7, …) on SB Prod Controller-4.
-		// Master LCC stays on the sbprod (Controller-2) rule above.
+		// NOS Local LCC on Controller-4 — fallback when no PC job exists
+		// (e.g. 7.6.0.10). PC jobs win via lcc-local-c4-pc below.
 		ID: "lcc-local-c4", Controller: "sbprod4", Parent: []string{"Nupipe", "LCC_NOS"},
 		Label: "msp_master Local LCC", ShortLabel: "Local LCC", Lane: "LCC",
 		MasterGroup: "msp-master", MasterName: "",
 		VersionRegex: regexp.MustCompile(`^msp-ganges-(\d+(?:\.\d+)*)$`), JobPrefix: "msp-ganges-",
 	},
 	{
-		// Postcommit / smoke. Master job is on SB Prod Controller-1.
+		// Older patch Local LCC PC (e.g. 7.6) on Controller-2.
+		ID: "lcc-local-pc", Controller: "sbprod", Parent: []string{"Nupipe", "LCC_PC"},
+		Label: "msp_master Local LCC", ShortLabel: "Local LCC", Lane: "LCC",
+		MasterGroup: "msp-master", MasterName: "",
+		VersionRegex: regexp.MustCompile(`^msp-ganges-(\d+(?:\.\d+)*)-pc$`), JobPrefix: "msp-ganges-", JobSuffix: "-pc",
+	},
+	{
+		// Current patch Local LCC PC (7.6.1, 7.7, …) on Controller-4.
+		ID: "lcc-local-c4-pc", Controller: "sbprod4", Parent: []string{"Nupipe", "LCC_PC"},
+		Label: "msp_master Local LCC", ShortLabel: "Local LCC", Lane: "LCC",
+		MasterGroup: "msp-master", MasterName: "",
+		VersionRegex: regexp.MustCompile(`^msp-ganges-(\d+(?:\.\d+)*)-pc$`), JobPrefix: "msp-ganges-", JobSuffix: "-pc",
+	},
+	{
+		// Postcommit / smoke lives on the product `master` row, not msp-master.
+		// Versioned NOS jobs are fallback; smoke-pc upserts the PC siblings.
 		ID: "smoke", Controller: "sbprod1", Parent: []string{"Postcommit"},
 		Label: "Smoke", ShortLabel: "Smoke", Lane: "Smoke",
-		MasterGroup: "msp-master", MasterName: "master",
+		MasterGroup: "master", MasterName: "master",
 		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
 	},
 	{
-		// Master LKG on SB Prod Controller-1 (Nupipe/LKG/master).
+		ID: "smoke-pc", Controller: "sbprod1", Parent: []string{"Postcommit"},
+		Label: "Smoke", ShortLabel: "Smoke", Lane: "Smoke",
+		MasterGroup: "master", MasterName: "",
+		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable-pc$`), JobPrefix: "ganges-", JobSuffix: "-stable-pc",
+	},
+	{
+		// Product master LKG on SB Prod Controller-1 (Nupipe/LKG/master).
+		// Versioned NOS (`ganges-<ver>-stable`) is fallback; lkg-c1 prefers PC.
 		ID: "lkg", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG"},
 		Label: "LKG", ShortLabel: "LKG", Lane: "LKG",
-		MasterGroup: "lkg", MasterName: "master",
+		MasterGroup: "master", MasterName: "master",
 		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
 	},
 	{
-		// Current LKG home (7.6.x, 7.7, …). Versioned jobs only — master LKG
-		// is the lkg rule above (sbprod1). Listed after `lkg` so overlapping
-		// versions prefer this controller.
+		// Versioned LKG PC (`ganges-<ver>-stable-pc`, including 7.6.x and 7.7).
+		// Listed after `lkg` so PC wins when both NOS and PC jobs exist.
 		ID: "lkg-c1", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG"},
 		Label: "LKG", ShortLabel: "LKG", Lane: "LKG",
-		MasterGroup: "lkg", MasterName: "",
-		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
+		MasterGroup: "master", MasterName: "",
+		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable-pc$`), JobPrefix: "ganges-", JobSuffix: "-stable-pc",
 	},
 }
 

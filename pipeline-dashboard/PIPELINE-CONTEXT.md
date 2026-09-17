@@ -21,19 +21,21 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 | Master (msp-master) | Precommit | SB Prod Controller-3 | `Nupipe/Precommit_NOS/msp-master` |
 | Master (msp-master) | Local LCC | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-master` |
 | Master (msp-master) | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-master` |
-| Master (msp-master) | Smoke | SB Prod Controller-1 | `Postcommit/master` |
-| Master (standalone) | LKG | SB Prod Controller-1 | `Nupipe/LKG/master` |
+| Master (msp-master) | LKG | SB Prod Controller-1 | `Nupipe/LKG_ValPromote/master` |
+| Master (master) | Smoke | SB Prod Controller-1 | `Postcommit/master` |
+| Master (master) | LKG | SB Prod Controller-1 | `Nupipe/LKG/master` |
 | Patch release | Precommit (current) | SB Prod Controller-4 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
 | Patch release | Precommit (older) | Harbinger Prod-12 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
-| Patch release | Local LCC (current) | SB Prod Controller-4 | `Nupipe/LCC_NOS/msp-ganges-<ver>` |
-| Patch release | Local LCC (older) | SB Prod Controller-2 | `Nupipe/LCC_NOS/msp-ganges-<ver>` |
-| Patch release | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-ganges-<ver>` |
-| Patch release | Smoke | SB Prod Controller-1 | `Postcommit/ganges-<ver>-stable` |
-| Patch release | LKG | SB Prod Controller-1 | `Nupipe/LKG/ganges-<ver>-stable` |
+| Patch release | Local LCC (current) | SB Prod Controller-4 | `Nupipe/LCC_PC/msp-ganges-<ver>-pc` |
+| Patch release | Local LCC (older) | SB Prod Controller-2 | `Nupipe/LCC_PC/msp-ganges-<ver>-pc` |
+| Patch release | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-ganges-<ver>-pc` |
+| Patch release | Smoke | SB Prod Controller-1 | `Postcommit/ganges-<ver>-stable-pc` |
+| Patch release | LKG | SB Prod Controller-1 | `Nupipe/LKG/ganges-<ver>-stable-pc` |
 
-> **Master section semantics:** Precommit + Local LCC + GLCC + Smoke are stages
-> of the `msp-master` pipeline and are grouped together; **LKG** is a separate
-> mainline shown standalone.
+> **Master section semantics:** **msp-master** and **master** are separate
+> rows. `msp-master` is Precommit + Local LCC + GLCC + ValPromote LKG
+> (`Nupipe/LKG_ValPromote/master`). `master` is Smoke (`Postcommit/master`)
+> + product LKG (`Nupipe/LKG/master`).
 >
 > **Precommit master** is the real `msp-master` job on **SB Prod Controller-3**
 > under `Nupipe/Precommit_NOS/msp-master` (discovery rule `precommit-master`).
@@ -48,23 +50,28 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 > Harbinger-12 leftover. These feed the patch-release comparison only (they
 > do not contribute a master card).
 >
-> **Local LCC patch versions** follow the same split: current trains on
-> **Controller-4** `Nupipe/LCC_NOS/msp-ganges-<ver>` (rule `lcc-local-c4`);
-> older `msp-ganges-7.6` + master LCC stay on **Controller-2**. GLCC patch
-> jobs were not found on Controller-4 (only Controller-2 `msp-ganges-7.6`).
+> **Local LCC patch versions** prefer **PC** jobs. Current trains use
+> **Controller-4** `Nupipe/LCC_PC/msp-ganges-<ver>-pc` (rule `lcc-local-c4-pc`);
+> older trains use **Controller-2** `Nupipe/LCC_PC/msp-ganges-<ver>-pc`
+> (rule `lcc-local-pc`). NOS jobs (`LCC_NOS/msp-ganges-<ver>`) remain as
+> fallback when a version has no PC sibling (e.g. 7.6.0.10). Master LCC
+> stays on **Controller-2** `LCC_NOS/msp-master`. GLCC prefers
+> `msp-ganges-<ver>-pc` in `LCC_Dial_Tests` (rule `glcc-pc`).
 >
 > The Devtest `msp-controller-precommit` job remains the Devtest card.
 >
-> **LKG on Controller-1 (2026-09-07):** both **master LKG** (`Nupipe/LKG/master`)
-> and versioned LKG (`Nupipe/LKG/ganges-<ver>-stable`, including 7.6.x and
-> **7.7**) are discovered on **SB Prod Controller-1**. Rule `lkg` owns the
-> master job; rule `lkg-c1` (listed after it) upserts overlapping version+lane
-> jobs onto the same controller. Harbinger Prod-14 is still in the controller
-> map but **no discovery rule targets it** — older 7.5.x jobs that exist only
-> there will not appear. The `-stable-pc` sibling is still excluded.
+> **LKG on Controller-1 (2026-09-07 / PC 2026-09-17):** product **master LKG**
+> (`Nupipe/LKG/master`) and versioned LKG are discovered on **SB Prod
+> Controller-1**. Rule `lkg` owns the master job and NOS
+> `ganges-<ver>-stable` fallbacks. Rule `lkg-c1` (listed after it) prefers
+> the PC sibling `ganges-<ver>-stable-pc` (7.6.x, **7.7**, …) whenever it
+> exists. **msp-master LKG** is a separate job:
+> `Nupipe/LKG_ValPromote/master` (rule `lkg-valpromote`). Harbinger Prod-14
+> is still in the controller map but **no discovery rule targets it**.
 >
-> **Smoke** is `Postcommit` on SB Prod Controller-1 (`master` +
-> `ganges-<ver>-stable`).
+> **Smoke** is on the product `master` row: `Postcommit` on SB Prod
+> Controller-1 (`master` + PC `ganges-<ver>-stable-pc`, with NOS `-stable`
+> as fallback).
 
 ---
 
@@ -119,22 +126,26 @@ folder's child jobs and regex the version out of each name.*
 Observed naming (live):
 
 - SB Prod Controller-2 (`LCC_NOS`, `LCC_Dial_Tests`): `msp-master`,
-  older `msp-ganges-7.6` → regex `^msp-ganges-(\d+(?:\.\d+)*)$`
-- SB Prod Controller-4 (`LCC_NOS`): current `msp-ganges-7.6.1`,
-  `msp-ganges-7.7` → same regex
+  older NOS `msp-ganges-7.6` → regex `^msp-ganges-(\d+(?:\.\d+)*)$`
+- SB Prod Controller-2 (`LCC_PC`, `LCC_Dial_Tests`): PC
+  `msp-ganges-7.6-pc` → regex `^msp-ganges-(\d+(?:\.\d+)*)-pc$`
+- SB Prod Controller-4 (`LCC_NOS`): NOS fallback `msp-ganges-7.6.0.10`
+- SB Prod Controller-4 (`LCC_PC`): current `msp-ganges-7.6.1-pc`,
+  `msp-ganges-7.7-pc` → regex `^msp-ganges-(\d+(?:\.\d+)*)-pc$`
 - SB Prod Controller-4 (`Precommit_PC`): `msp-ganges-7.6.1-pc`,
   `msp-ganges-7.7-pc` → regex `^msp-ganges-(\d+(?:\.\d+)*)-pc$`
 - Harbinger-12 (`Precommit_PC`): older `msp-ganges-7.6-pc`,
   `msp-ganges-7.6.9.3-pc` (same `-pc` regex; excludes `msp-feat-*` /
   `msp-ncm-*`)
-- SB Prod Controller-1 (`LKG`): `master`, `ganges-7.6-stable`,
-  `ganges-7.7-stable` → regex `^ganges-(\d+(?:\.\d+)*)-stable$`
-- SB Prod Controller-1 (`Postcommit` / Smoke): `master`,
-  `ganges-7.6-stable` → same `-stable` regex
+- SB Prod Controller-1 (`LKG`): `master`, NOS `ganges-7.7-stable`
+  (fallback), PC `ganges-7.7-stable-pc` → regex
+  `^ganges-(\d+(?:\.\d+)*)-stable-pc$`
+- SB Prod Controller-1 (`Postcommit` / Smoke): `master`, PC
+  `ganges-<ver>-stable-pc` (NOS `-stable` fallback)
 
 Later discovery rules **upsert** on the same `version + lane`, so
-`precommit-pc-c4` / `lcc-local-c4` / `lkg-c1` replace earlier hits for
-that train.
+`precommit-pc-c4` / `lcc-local-c4-pc` / `lkg-c1` / `smoke-pc` /
+`glcc-pc` replace earlier NOS hits for that train.
 
 Versions therefore range from 2-part (`7.6`) to 4-part (`7.6.9.3`,
 `7.5.1.10`) and are compared numerically segment-by-segment
@@ -147,8 +158,8 @@ regular poll cadence (default 3 min) for status.
 
 ### Clubbing under version blocks
 The UI groups pipelines into **blocks**:
-- One **Master** block clubs the `msp-master` lanes (Precommit, Local LCC, GLCC,
-  Smoke) plus standalone LKG.
+- Two **Master** blocks: **msp-master** (Precommit, Local LCC, GLCC,
+  ValPromote LKG) and **master** (Smoke, product LKG).
 - One block **per discovered version**, clubbing every lane that has that version.
   Blocks are labeled with the version and its train (major.minor, e.g. `7.6`),
   sorted newest-first. Older patch blocks start collapsed to keep the leadership
@@ -448,6 +459,8 @@ establishes the ledger. Update this table at the end of each future run.
 | 15 | 2026-09-09 | `PATCH_FAIL_THRESHOLD` (default 3) for non-master lanes; `/api/digest/test` isolated to `#test-msp` without `@msp-help`; context + README synced (LKG move, Smoke, dual-threshold alerting). | ~22,000 | ~666,000 |
 | 16 | 2026-09-09 | Patch Precommit + Local LCC current trains (7.6.1, 7.7, …) discovered on SB Prod Controller-4 (upsert over Harbinger-12 / Controller-2 leftovers). `.env` templates gained `PATCH_FAIL_THRESHOLD`. | ~18,000 | ~684,000 |
 | 17 | 2026-09-09 | Success digest (off by default) + `SUCCESS_THRESHOLD`; digest times split into `MASTER_DIGEST_TIMES` (24h) and `MASTER_DIGEST_TZ` (IST/PST); `/api/digest/test` uses the `.env` channel again. | ~20,000 | ~704,000 |
+| 18 | 2026-09-17 | Patch LKG / Local LCC / GLCC / Smoke prefer PC jobs (`ganges-<ver>-stable-pc`, `LCC_PC/msp-ganges-<ver>-pc`) over NOS; NOS kept as fallback. | ~18,000 | ~722,000 |
+| 19 | 2026-09-17 | Split msp-master vs master rows; add msp-master LKG (`LKG_ValPromote/master`); move Smoke onto product master with `Nupipe/LKG/master`. | ~12,000 | ~734,000 |
 
 Notes on the Run 1 estimate: this counts the full agent session — reading skills
 and workspace, ~30 live Jenkins/Slack probe commands, authoring ~10 files

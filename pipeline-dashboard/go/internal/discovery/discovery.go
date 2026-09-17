@@ -124,7 +124,8 @@ func DiscoverPipelines() Result {
 		}
 
 		// Version-scoped jobs. Later rules win on the same version+lane so
-		// Controller-4 Precommit/LCC and Controller-1 LKG replace older homes.
+		// PC jobs (LCC_PC, -stable-pc) replace NOS, and Controller-4 / C1
+		// replace older homes.
 		for _, j := range res.Jobs {
 			m := rule.VersionRegex.FindStringSubmatch(j.Name)
 			if m == nil || len(m) < 2 {

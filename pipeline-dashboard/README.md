@@ -8,7 +8,17 @@ or when **Devtest** hits `DEVTEST_FAIL_THRESHOLD` (default 3).
 
 ![preview](docs/preview.png)
 
-> **What's new (2026-09-09)**
+> **What's new (2026-09-17)**
+> - **msp-master and master are separate rows.** msp-master LKG is
+>   `Nupipe/LKG_ValPromote/master`. Smoke sits on the product `master` row
+>   with `Nupipe/LKG/master`.
+> - **Patch lanes prefer PC jobs**, not NOS. 7.7 LKG is
+>   `Nupipe/LKG/ganges-7.7-stable-pc`; 7.7 Local LCC is
+>   `Nupipe/LCC_PC/msp-ganges-7.7-pc`. The same `-pc` preference applies to
+>   other versions (LKG, Local LCC, GLCC, Smoke). NOS jobs remain fallback
+>   when a version has no PC sibling. Master jobs are unchanged.
+>
+> **Earlier (2026-09-09)**
 > - **Patch Precommit / Local LCC** for current trains (7.6.1, 7.7, …) now
 >   resolve on **SB Prod Controller-4**. Older trains stay on Harbinger-12
 >   (Precommit) and Controller-2 (Local LCC).
@@ -464,8 +474,8 @@ curl -s -X POST http://<host>:4317/api/digest/test
   automatically. Click **Fetch latest releases** to force an immediate re-scan.
 - **Last-10 build sparkline** per pipeline with hover details, success rate, and a
   consecutive-failure warning.
-- **Master section** grouped as `msp-master` (Precommit + Local LCC + GLCC +
-  Smoke) with a standalone LKG master on SB Prod Controller-1.
+- **Master section** is two rows: `msp-master` (Precommit + Local LCC + GLCC +
+  ValPromote LKG) and `master` (Smoke + product LKG).
 - **Patch-release comparison** — pick any two versions from dropdowns and compare
   their lanes side by side.
 - **Slack alert** to `#test-msp` tagging `@msp-help` when the last 10 builds

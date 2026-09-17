@@ -287,21 +287,50 @@ func buildFetchList(d discovery.Result) []discovery.Meta {
 	return list
 }
 
-// assembleVersionBlocks clubs master + patch releases per version.
+// masterBlockOrder is the UI row order for isMaster groups.
+var masterBlockOrder = []string{"msp-master", "master"}
+
+func masterGroupOf(m discovery.Meta) string {
+	switch m.MasterGroup {
+	case "", "lkg", "other":
+		return "master"
+	default:
+		return m.MasterGroup
+	}
+}
+
+// assembleVersionBlocks clubs master groups + patch releases per version.
+// msp-master and product master stay as separate isMaster rows.
 func assembleVersionBlocks(d discovery.Result, cardByKey map[string]model.Card) []model.VersionBlock {
 	blocks := []model.VersionBlock{}
 
-	masterPipelines := []model.Card{}
+	grouped := map[string][]model.Card{}
+	seen := map[string]bool{}
 	for _, m := range d.Masters {
-		if c, ok := cardByKey[m.Key]; ok {
-			masterPipelines = append(masterPipelines, c)
+		c, ok := cardByKey[m.Key]
+		if !ok {
+			continue
+		}
+		g := masterGroupOf(m)
+		grouped[g] = append(grouped[g], c)
+		seen[g] = true
+	}
+	for _, g := range masterBlockOrder {
+		if pipes := grouped[g]; len(pipes) > 0 {
+			blocks = append(blocks, model.VersionBlock{
+				Version: g, Train: g, IsMaster: true,
+				Label: g, Pipelines: pipes,
+			})
+			delete(seen, g)
 		}
 	}
-	if len(masterPipelines) > 0 {
-		blocks = append(blocks, model.VersionBlock{
-			Version: "master", Train: "master", IsMaster: true,
-			Label: "Master", Pipelines: masterPipelines,
-		})
+	for g := range seen {
+		if pipes := grouped[g]; len(pipes) > 0 {
+			blocks = append(blocks, model.VersionBlock{
+				Version: g, Train: g, IsMaster: true,
+				Label: g, Pipelines: pipes,
+			})
+		}
 	}
 
 	for _, version := range discovery.SortedVersions(d.Versions) {
