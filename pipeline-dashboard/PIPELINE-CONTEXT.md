@@ -24,6 +24,7 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 | Master (msp-master) | LKG | SB Prod Controller-1 | `Nupipe/LKG_ValPromote/master` |
 | Master (master) | Smoke | SB Prod Controller-1 | `Postcommit/master` |
 | Master (master) | LKG | SB Prod Controller-1 | `Nupipe/LKG/master` |
+| Master (master) | LKG ValPromote | SB Prod Controller-1 | `Nupipe/LKG_ValPromote/master` |
 | Patch release | Precommit (current) | SB Prod Controller-4 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
 | Patch release | Precommit (older) | Harbinger Prod-12 | `Nupipe/Precommit_PC/msp-ganges-<ver>-pc` |
 | Patch release | Local LCC (current) | SB Prod Controller-4 | `Nupipe/LCC_PC/msp-ganges-<ver>-pc` |
@@ -31,11 +32,14 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 | Patch release | GLCC | SB Prod Controller-2 | `Nupipe/LCC_Dial_Tests/msp-ganges-<ver>-pc` |
 | Patch release | Smoke | SB Prod Controller-1 | `Postcommit/ganges-<ver>-stable-pc` |
 | Patch release | LKG | SB Prod Controller-1 | `Nupipe/LKG/ganges-<ver>-stable-pc` |
+| Patch release | LKG ValPromote | SB Prod Controller-1 | `Nupipe/LKG_ValPromote/ganges-<ver>-stable-pc` |
 
 > **Master section semantics:** **msp-master** and **master** are separate
 > rows. `msp-master` is Precommit + Local LCC + GLCC + ValPromote LKG
 > (`Nupipe/LKG_ValPromote/master`). `master` is Smoke (`Postcommit/master`)
-> + product LKG (`Nupipe/LKG/master`).
+> + product LKG (`Nupipe/LKG/master`) + LKG ValPromote
+> (`Nupipe/LKG_ValPromote/master`). LKG ValPromote is a distinct lane from
+> product LKG (validation promote); it does not upsert over LKG.
 >
 > **Precommit master** is the real `msp-master` job on **SB Prod Controller-3**
 > under `Nupipe/Precommit_NOS/msp-master` (discovery rule `precommit-master`).
@@ -66,8 +70,12 @@ it is, how the Jenkins data is consumed, and a per-run token ledger.
 > `ganges-<ver>-stable` fallbacks. Rule `lkg-c1` (listed after it) prefers
 > the PC sibling `ganges-<ver>-stable-pc` (7.6.x, **7.7**, …) whenever it
 > exists. **msp-master LKG** is a separate job:
-> `Nupipe/LKG_ValPromote/master` (rule `lkg-valpromote`). Harbinger Prod-14
-> is still in the controller map but **no discovery rule targets it**.
+> `Nupipe/LKG_ValPromote/master` (rule `lkg-valpromote`). **Product master
+> and patch LKG ValPromote** use the same folder with a distinct lane
+> (rules `lkg-valpromote-c1` / `lkg-valpromote-c1-pc`): master job plus
+> `ganges-<ver>-stable-pc` (NOS `-stable` fallback). Live jobs today are
+> `master`, 7.6.1, and 7.7; newer trains appear automatically. Harbinger
+> Prod-14 is still in the controller map but **no discovery rule targets it**.
 >
 > **Smoke** is on the product `master` row: `Postcommit` on SB Prod
 > Controller-1 (`master` + PC `ganges-<ver>-stable-pc`, with NOS `-stable`
@@ -82,7 +90,7 @@ job URL. It supports a `tree=` query param to select exactly the fields we need,
 which keeps responses tiny and fast.
 
 **All Jenkins controllers allow anonymous (read-only) access** — verified live for
-Devtest, SB Prod Controller-1 (Postcommit + LKG), SB Prod Controller-2,
+Devtest, SB Prod Controller-1 (Postcommit + LKG + LKG ValPromote), SB Prod Controller-2,
 Harbinger-12, Harbinger-14, and **SB Prod Controller-3** (`Precommit_NOS/msp-master`,
 re-verified 2026-08-31). No tokens are required to read status. TLS on the corp `*.ntnxdpro.com` /
 `*.eng.nutanix.com` controllers uses an internal CA, so the HTTP client is
@@ -140,12 +148,15 @@ Observed naming (live):
 - SB Prod Controller-1 (`LKG`): `master`, NOS `ganges-7.7-stable`
   (fallback), PC `ganges-7.7-stable-pc` → regex
   `^ganges-(\d+(?:\.\d+)*)-stable-pc$`
+- SB Prod Controller-1 (`LKG_ValPromote`): `master` (also msp-master LKG),
+  NOS `ganges-<ver>-stable` fallback, PC `ganges-<ver>-stable-pc` (live
+  today: 7.6.1, 7.7) → same `-stable` / `-stable-pc` regexes as LKG
 - SB Prod Controller-1 (`Postcommit` / Smoke): `master`, PC
   `ganges-<ver>-stable-pc` (NOS `-stable` fallback)
 
 Later discovery rules **upsert** on the same `version + lane`, so
-`precommit-pc-c4` / `lcc-local-c4-pc` / `lkg-c1` / `smoke-pc` /
-`glcc-pc` replace earlier NOS hits for that train.
+`precommit-pc-c4` / `lcc-local-c4-pc` / `lkg-c1` / `lkg-valpromote-c1-pc` /
+`smoke-pc` / `glcc-pc` replace earlier NOS hits for that train.
 
 Versions therefore range from 2-part (`7.6`) to 4-part (`7.6.9.3`,
 `7.5.1.10`) and are compared numerically segment-by-segment
@@ -159,7 +170,7 @@ regular poll cadence (default 3 min) for status.
 ### Clubbing under version blocks
 The UI groups pipelines into **blocks**:
 - Two **Master** blocks: **msp-master** (Precommit, Local LCC, GLCC,
-  ValPromote LKG) and **master** (Smoke, product LKG).
+  ValPromote LKG) and **master** (Smoke, product LKG, LKG ValPromote).
 - One block **per discovered version**, clubbing every lane that has that version.
   Blocks are labeled with the version and its train (major.minor, e.g. `7.6`),
   sorted newest-first. Older patch blocks start collapsed to keep the leadership
@@ -180,8 +191,9 @@ except the scheduled digest (which fires at most twice a day):
 2. **Patch-release threshold** — a *lower* bar for **non-master** lanes only
    (see below). Same Slack message + cooldown as (1).
 3. **Master digest** — scheduled at 09:00 IST and 09:00 US-Pacific when any
-   master lane (msp-master Precommit / Local LCC / GLCC / Smoke, plus standalone
-   LKG) has ≥ `MASTER_FAIL_THRESHOLD` (default 5) consecutive failures. The
+   master lane (msp-master Precommit / Local LCC / GLCC / ValPromote LKG, plus
+   master Smoke / LKG / LKG ValPromote) has ≥ `MASTER_FAIL_THRESHOLD` (default 5)
+   consecutive failures. The
    scheduled run posts nothing when the board is clean.
 
 `POST /api/digest/test` posts to the channel from the env file
@@ -287,7 +299,8 @@ server (`/api/health`, `/api/pipelines`, `/api/alerts`, `/api/refresh`,
 ### UI mapping (timeline → our Jenkins data)
 - Master group + each `ganges-<version>` → a **component row** in the timeline.
 - Lanes map to stage columns (real Jenkins data only): `Precommit → Precommit pipeline`,
-  `LCC → Local LCC`, `GLCC → Global LCC`, `Smoke → Smoke`, `LKG → LKG`.
+  `LCC → Local LCC`, `GLCC → Global LCC`, `Smoke → Smoke`, `LKG → LKG`,
+  `LKG ValPromote → LKG VALPROMOTE`.
 - KPI strip: **Last Successful LKG**, master-lane sub-rows, pipeline volume,
   health, and the red **N Pipelines Failing** panel are all real.
 - The earlier commit-flow **TODO placeholders** were **removed** (Awaiting-*,
@@ -310,7 +323,7 @@ the binary is static, the target host needs **no Node and no runtime** — just
 
 The live UI keeps the **Code Tracker** chrome. Timeline columns are the real
 Jenkins lanes: **Precommit pipeline**, **Local LCC**, **Global LCC**, **Smoke**,
-**LKG**. Top-level tabs:
+**LKG**, **LKG ValPromote**. Top-level tabs:
 
 1. **Branches** — KPI strip + Component Pipeline Timeline (Jenkins data).
    The first KPI ("Last Successful LKG") links to **master LKG**
@@ -461,6 +474,7 @@ establishes the ledger. Update this table at the end of each future run.
 | 17 | 2026-09-09 | Success digest (off by default) + `SUCCESS_THRESHOLD`; digest times split into `MASTER_DIGEST_TIMES` (24h) and `MASTER_DIGEST_TZ` (IST/PST); `/api/digest/test` uses the `.env` channel again. | ~20,000 | ~704,000 |
 | 18 | 2026-09-17 | Patch LKG / Local LCC / GLCC / Smoke prefer PC jobs (`ganges-<ver>-stable-pc`, `LCC_PC/msp-ganges-<ver>-pc`) over NOS; NOS kept as fallback. | ~18,000 | ~722,000 |
 | 19 | 2026-09-17 | Split msp-master vs master rows; add msp-master LKG (`LKG_ValPromote/master`); move Smoke onto product master with `Nupipe/LKG/master`. | ~12,000 | ~734,000 |
+| 20 | 2026-09-28 | Add LKG ValPromote as a distinct lane on product master + patch trains (`Nupipe/LKG_ValPromote`, PC over NOS). msp-master LKG unchanged. | ~18,000 | ~752,000 |
 
 Notes on the Run 1 estimate: this counts the full agent session — reading skills
 and workspace, ~30 live Jenkins/Slack probe commands, authoring ~10 files

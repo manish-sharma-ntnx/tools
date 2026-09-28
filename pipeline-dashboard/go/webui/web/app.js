@@ -40,6 +40,7 @@ const STAGES = [
   { id: 'global-lcc', label: 'GLOBAL LCC', lane: 'GLCC', kind: 'lane' },
   { id: 'smoke', label: 'SMOKE', lane: 'Smoke', kind: 'lane' },
   { id: 'lkg', label: 'LKG', lane: 'LKG', kind: 'lane' },
+  { id: 'lkg-valpromote', label: 'LKG VALPROMOTE', lane: 'LKG ValPromote', kind: 'lane' },
 ];
 
 /* ---------- helpers ---------- */
@@ -179,6 +180,7 @@ function renderKpis(data) {
     ...['Precommit', 'LCC', 'GLCC'].map((lane) => mspLanes.find((p) => p.lane === lane)),
     productLanes.find((p) => p.lane === 'Smoke'),
     mspLanes.find((p) => p.lane === 'LKG'),
+    productLanes.find((p) => p.lane === 'LKG ValPromote'),
   ].filter(Boolean);
 
   const failing = cards.filter((c) => c.allFailing);

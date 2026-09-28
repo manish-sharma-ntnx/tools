@@ -135,13 +135,15 @@ func TestAssembleVersionBlocksSplitsMspMasterAndMaster(t *testing.T) {
 			{Key: "lkg-vp", MasterGroup: "msp-master", Lane: "LKG"},
 			{Key: "smoke", MasterGroup: "master", Lane: "Smoke"},
 			{Key: "lkg", MasterGroup: "master", Lane: "LKG"},
+			{Key: "lkg-vp-master", MasterGroup: "master", Lane: "LKG ValPromote"},
 		},
 	}
 	cards := map[string]model.Card{
-		"pre":    {Key: "pre"},
-		"lkg-vp": {Key: "lkg-vp"},
-		"smoke":  {Key: "smoke"},
-		"lkg":    {Key: "lkg"},
+		"pre":           {Key: "pre"},
+		"lkg-vp":        {Key: "lkg-vp"},
+		"smoke":         {Key: "smoke"},
+		"lkg":           {Key: "lkg"},
+		"lkg-vp-master": {Key: "lkg-vp-master"},
 	}
 	blocks := assembleVersionBlocks(d, cards)
 	if len(blocks) != 2 {
@@ -156,7 +158,7 @@ func TestAssembleVersionBlocksSplitsMspMasterAndMaster(t *testing.T) {
 	if keysOf(blocks[0].Pipelines)[0] != "pre" || keysOf(blocks[0].Pipelines)[1] != "lkg-vp" {
 		t.Fatalf("msp-master pipelines=%v", keysOf(blocks[0].Pipelines))
 	}
-	if keysOf(blocks[1].Pipelines)[0] != "smoke" || keysOf(blocks[1].Pipelines)[1] != "lkg" {
+	if keysOf(blocks[1].Pipelines)[0] != "smoke" || keysOf(blocks[1].Pipelines)[1] != "lkg" || keysOf(blocks[1].Pipelines)[2] != "lkg-vp-master" {
 		t.Fatalf("master pipelines=%v", keysOf(blocks[1].Pipelines))
 	}
 }

@@ -1,22 +1,28 @@
 # MSP Pipeline Dashboard
 
 Leadership-facing health board for MSP Jenkins pipelines: **Devtest**, **Master**
-(Precommit / Local LCC / GLCC / Smoke) plus standalone **LKG**, and **Patch
+(Precommit / Local LCC / GLCC / Smoke / LKG / LKG ValPromote), and **Patch
 Releases**, with automatic version discovery. Slack alerts when a pipeline fails
 its last 10 builds, when a **patch** lane hits `PATCH_FAIL_THRESHOLD` (default 3),
 or when **Devtest** hits `DEVTEST_FAIL_THRESHOLD` (default 3).
 
 ![preview](docs/preview.png)
 
-> **What's new (2026-09-17)**
+> **What's new (2026-09-28)**
+> - **LKG ValPromote** is a new lane on product `master` and every patch
+>   train (`Nupipe/LKG_ValPromote`, PC `ganges-<ver>-stable-pc` over NOS
+>   `-stable`). This is validation promote for LKG — it does not replace
+>   product LKG. msp-master LKG remains `Nupipe/LKG_ValPromote/master`.
+>
+> **Earlier (2026-09-17)**
 > - **msp-master and master are separate rows.** msp-master LKG is
 >   `Nupipe/LKG_ValPromote/master`. Smoke sits on the product `master` row
 >   with `Nupipe/LKG/master`.
 > - **Patch lanes prefer PC jobs**, not NOS. 7.7 LKG is
 >   `Nupipe/LKG/ganges-7.7-stable-pc`; 7.7 Local LCC is
 >   `Nupipe/LCC_PC/msp-ganges-7.7-pc`. The same `-pc` preference applies to
->   other versions (LKG, Local LCC, GLCC, Smoke). NOS jobs remain fallback
->   when a version has no PC sibling. Master jobs are unchanged.
+>   other versions (LKG, Local LCC, GLCC, Smoke, LKG ValPromote). NOS jobs
+>   remain fallback when a version has no PC sibling. Master jobs are unchanged.
 >
 > **Earlier (2026-09-09)**
 > - **Patch Precommit / Local LCC** for current trains (7.6.1, 7.7, …) now
@@ -399,7 +405,8 @@ SLACK_BOT_TOKEN="xoxb-..." node server/index.js
 ## Slack master-pipeline digest
 
 The app can post the health of the **master** pipelines (the `msp-master` group —
-Precommit + Local LCC + GLCC + Smoke — plus standalone **LKG**) to Slack on a
+Precommit + Local LCC + GLCC + ValPromote LKG, plus `master` Smoke / LKG /
+LKG ValPromote) to Slack on a
 schedule.
 
 **Rule:** at each configured time, any master pipeline with **≥ `MASTER_FAIL_THRESHOLD`
@@ -475,7 +482,7 @@ curl -s -X POST http://<host>:4317/api/digest/test
 - **Last-10 build sparkline** per pipeline with hover details, success rate, and a
   consecutive-failure warning.
 - **Master section** is two rows: `msp-master` (Precommit + Local LCC + GLCC +
-  ValPromote LKG) and `master` (Smoke + product LKG).
+  ValPromote LKG) and `master` (Smoke + product LKG + LKG ValPromote).
 - **Patch-release comparison** — pick any two versions from dropdowns and compare
   their lanes side by side.
 - **Slack alert** to `#test-msp` tagging `@msp-help` when the last 10 builds
@@ -484,8 +491,9 @@ curl -s -X POST http://<host>:4317/api/digest/test
 - **Scheduled master digest** at 09:00 IST and 09:00 US-Pacific.
 - **Nutanix-themed** UI with live/stale indicator and controller reachability.
 
-See `PIPELINE-CONTEXT.md` for architecture, Jenkins API details, and design
-decisions.
+See `PIPELINE-INFO.md` for what each lane (Precommit, Local LCC, GLCC, LKG,
+Smoke, ValPromote) means and the AOS/PC workflow. See `PIPELINE-CONTEXT.md`
+for architecture, Jenkins API details, and design decisions.
 
 ## API
 

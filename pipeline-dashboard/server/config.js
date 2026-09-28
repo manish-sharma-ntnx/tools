@@ -12,8 +12,8 @@
  *     LCC_Dial_Tests (`-pc`) win when present.
  *   - SB prod Controller-4: current patch Precommit PC (`msp-ganges-<ver>-pc`)
  *     and Local LCC PC (`LCC_PC/msp-ganges-<ver>-pc`, e.g. 7.6.1, 7.7).
- *   - SB prod Controller-1: LKG + Smoke prefer `ganges-<ver>-stable-pc`;
- *     NOS `-stable` is fallback when no PC job exists.
+ *   - SB prod Controller-1: LKG + Smoke + LKG ValPromote prefer
+ *     `ganges-<ver>-stable-pc`; NOS `-stable` is fallback when no PC job exists.
  *   - Harbinger-12: older Precommit PC jobs still listed there.
  *
  * "version" here is the ganges train, e.g. 7.6, 7.6.0.1, 7.5.1.10.
@@ -286,6 +286,37 @@ const DISCOVERY_RULES = [
     jobPrefix: 'ganges-',
     jobSuffix: '-stable-pc',
   },
+  {
+    // Product-master + versioned LKG ValPromote (validation promote).
+    // Distinct lane so it does not upsert over product LKG. The same
+    // folder's `master` job remains msp-master LKG via lkg-valpromote.
+    id: 'lkg-valpromote-c1',
+    controller: 'sbprod1',
+    parent: ['Nupipe', 'LKG_ValPromote'],
+    label: 'LKG ValPromote',
+    shortLabel: 'LKG ValPromote',
+    lane: 'LKG ValPromote',
+    masterGroup: 'master',
+    masterName: 'master',
+    versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable$/,
+    jobPrefix: 'ganges-',
+    jobSuffix: '-stable',
+  },
+  {
+    // Versioned LKG ValPromote PC (`ganges-<ver>-stable-pc`). Listed after
+    // the NOS rule so PC wins when both siblings exist.
+    id: 'lkg-valpromote-c1-pc',
+    controller: 'sbprod1',
+    parent: ['Nupipe', 'LKG_ValPromote'],
+    label: 'LKG ValPromote',
+    shortLabel: 'LKG ValPromote',
+    lane: 'LKG ValPromote',
+    masterGroup: 'master',
+    masterName: null,
+    versionRegex: /^ganges-(\d+(?:\.\d+)*)-stable-pc$/,
+    jobPrefix: 'ganges-',
+    jobSuffix: '-stable-pc',
+  },
 ];
 
 const SLACK = {
@@ -310,7 +341,7 @@ const SLACK = {
  * Scheduled "master pipeline health" digest.
  *
  * Rule: if any MASTER pipeline (msp-master: Precommit / Local LCC / GLCC /
- * ValPromote LKG, plus master: Smoke / LKG) has >= `masterFailThreshold` consecutive
+ * ValPromote LKG, plus master: Smoke / LKG / LKG ValPromote) has >= `masterFailThreshold` consecutive
  * build failures, post the failing pipeline(s) to Slack.
  *
  * This is NOT a per-poll alert; it fires only at the configured local times

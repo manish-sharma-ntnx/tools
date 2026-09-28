@@ -2,7 +2,8 @@
 // Ported from server/config.js. Jenkins controllers are read-only (anonymous).
 // Controllers: devtest, sbprod, sbprod1, sbprod3, sbprod4 (SB prod),
 // harbinger (prod-14, legacy LKG), harbinger12 (prod-12, older precommit PC).
-// Current patch Precommit + Local LCC live on sbprod4; LKG master uses sbprod1.
+// Current patch Precommit + Local LCC live on sbprod4; LKG + LKG ValPromote
+// master use sbprod1.
 package config
 
 import (
@@ -177,6 +178,23 @@ var DiscoveryRules = []DiscoveryRule{
 		// Listed after `lkg` so PC wins when both NOS and PC jobs exist.
 		ID: "lkg-c1", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG"},
 		Label: "LKG", ShortLabel: "LKG", Lane: "LKG",
+		MasterGroup: "master", MasterName: "",
+		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable-pc$`), JobPrefix: "ganges-", JobSuffix: "-stable-pc",
+	},
+	{
+		// Product-master + versioned LKG ValPromote (validation promote).
+		// Distinct lane so it does not upsert over product LKG. The same
+		// folder's `master` job remains msp-master LKG via lkg-valpromote.
+		ID: "lkg-valpromote-c1", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG_ValPromote"},
+		Label: "LKG ValPromote", ShortLabel: "LKG ValPromote", Lane: "LKG ValPromote",
+		MasterGroup: "master", MasterName: "master",
+		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable$`), JobPrefix: "ganges-", JobSuffix: "-stable",
+	},
+	{
+		// Versioned LKG ValPromote PC (`ganges-<ver>-stable-pc`). Listed after
+		// the NOS rule so PC wins when both siblings exist.
+		ID: "lkg-valpromote-c1-pc", Controller: "sbprod1", Parent: []string{"Nupipe", "LKG_ValPromote"},
+		Label: "LKG ValPromote", ShortLabel: "LKG ValPromote", Lane: "LKG ValPromote",
 		MasterGroup: "master", MasterName: "",
 		VersionRegex: regexp.MustCompile(`^ganges-(\d+(?:\.\d+)*)-stable-pc$`), JobPrefix: "ganges-", JobSuffix: "-stable-pc",
 	},

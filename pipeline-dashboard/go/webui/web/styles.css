@@ -270,10 +270,10 @@ code {
 }
 .tl-banner a { font-size: 12.5px; }
 
-/* Stage grid — 1 component col + 5 stage cols */
+/* Stage grid — 1 component col + 6 stage cols */
 .stage-head, .tl-row-stages {
   display: grid;
-  grid-template-columns: 220px repeat(5, 1fr);
+  grid-template-columns: 200px repeat(6, 1fr);
 }
 .stage-head {
   background: var(--surface-2);
@@ -434,5 +434,5 @@ code {
 @media (max-width: 1100px) {
   .kpi-strip { grid-template-columns: repeat(2, 1fr); }
   .kpi-fail { grid-column: 1 / -1; }
-  .stage-head, .tl-row-stages { grid-template-columns: 180px repeat(5, 1fr); font-size: 11px; }
+  .stage-head, .tl-row-stages { grid-template-columns: 160px repeat(6, 1fr); font-size: 11px; }
 }

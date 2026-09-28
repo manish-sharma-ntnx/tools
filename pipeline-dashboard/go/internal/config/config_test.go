@@ -26,6 +26,11 @@ func TestPCVersionRegexesPreferPCJobs(t *testing.T) {
 		{ruleID: "lkg-c1", job: "ganges-7.7-stable-pc", version: "7.7", match: true},
 		{ruleID: "lkg-c1", job: "ganges-7.7-stable", match: false},
 		{ruleID: "lkg-c1", job: "ganges-7.6.9.3-stable-pc", version: "7.6.9.3", match: true},
+		{ruleID: "lkg-valpromote-c1", job: "ganges-7.6.1-stable", version: "7.6.1", match: true},
+		{ruleID: "lkg-valpromote-c1", job: "ganges-7.6.1-stable-pc", match: false},
+		{ruleID: "lkg-valpromote-c1-pc", job: "ganges-7.6.1-stable-pc", version: "7.6.1", match: true},
+		{ruleID: "lkg-valpromote-c1-pc", job: "ganges-7.6.1-stable", match: false},
+		{ruleID: "lkg-valpromote-c1-pc", job: "ganges-7.7-stable-pc", version: "7.7", match: true},
 		{ruleID: "smoke", job: "ganges-7.7-stable", version: "7.7", match: true},
 		{ruleID: "smoke", job: "ganges-7.7-stable-pc", match: false},
 		{ruleID: "smoke-pc", job: "ganges-7.7-stable-pc", version: "7.7", match: true},
@@ -57,12 +62,14 @@ func TestPCVersionRegexesPreferPCJobs(t *testing.T) {
 
 func TestMasterGroupsSplitMspMasterAndMaster(t *testing.T) {
 	want := map[string]string{
-		"precommit-master": "msp-master",
-		"lcc-local":        "msp-master",
-		"glcc":             "msp-master",
-		"lkg-valpromote":   "msp-master",
-		"smoke":            "master",
-		"lkg":              "master",
+		"precommit-master":     "msp-master",
+		"lcc-local":            "msp-master",
+		"glcc":                 "msp-master",
+		"lkg-valpromote":       "msp-master",
+		"smoke":                "master",
+		"lkg":                  "master",
+		"lkg-valpromote-c1":    "master",
+		"lkg-valpromote-c1-pc": "master",
 	}
 	for id, group := range want {
 		rule := ruleByID(id)
@@ -80,6 +87,13 @@ func TestMasterGroupsSplitMspMasterAndMaster(t *testing.T) {
 	if got := strings.Join(vp.Parent, "/"); got != "Nupipe/LKG_ValPromote" {
 		t.Fatalf("lkg-valpromote parent=%s", got)
 	}
+	vpc1 := ruleByID("lkg-valpromote-c1")
+	if vpc1.Lane != "LKG ValPromote" || vpc1.MasterName != "master" {
+		t.Fatalf("lkg-valpromote-c1 lane/name = %s %s", vpc1.Lane, vpc1.MasterName)
+	}
+	if got := strings.Join(vpc1.Parent, "/"); got != "Nupipe/LKG_ValPromote" {
+		t.Fatalf("lkg-valpromote-c1 parent=%s", got)
+	}
 }
 
 func TestPCRulesAreListedAfterNOSFallbacks(t *testing.T) {
@@ -93,6 +107,7 @@ func TestPCRulesAreListedAfterNOSFallbacks(t *testing.T) {
 		{"glcc", "glcc-pc"},
 		{"smoke", "smoke-pc"},
 		{"lkg", "lkg-c1"},
+		{"lkg-valpromote-c1", "lkg-valpromote-c1-pc"},
 	}
 	for _, p := range pairs {
 		a, okA := index[p[0]]
